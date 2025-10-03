@@ -7,6 +7,8 @@ import { createClient } from '@supabase/supabase-js';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart,
 } from 'recharts';
+import dynamic from 'next/dynamic';
+const ChartBlock = dynamic(() => import('./ChartBlock'), { ssr: false });
 
 dayjs.extend(isoWeek);
 
@@ -411,36 +413,10 @@ export default function Page() {
       {/* Dashboard */}
       {tab === 'dashboard' && (
         <>
-          {/* Graph */}
+         {/* Graph */}
 <div style={card}>
   <div style={{ fontWeight: 600, marginBottom: 8 }}>Projected Ending Balances</div>
-  <ErrorBoundary>
-    {Array.isArray(chartData) && chartData.length > 0 ? (
-      <div style={{ height: 260, minWidth: 600 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={chartData}>
-            <defs>
-              <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopOpacity={0.35} />
-                <stop offset="95%" stopOpacity={0.05} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip formatter={(v: any) => Number(v).toLocaleString(undefined, { style: 'currency', currency: 'USD' })} />
-            <Area type="monotone" dataKey="Operating" strokeWidth={2} fillOpacity={1} fill="url(#g1)" />
-            <Area type="monotone" dataKey="Profit" strokeWidth={2} fillOpacity={0.3} />
-            <Area type="monotone" dataKey="Owners" strokeWidth={2} fillOpacity={0.3} />
-            <Area type="monotone" dataKey="Tax" strokeWidth={2} fillOpacity={0.3} />
-            <Area type="monotone" dataKey="Vault" strokeWidth={2} fillOpacity={0.3} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-    ) : (
-      <div style={{ fontSize: 12, color: '#666' }}>No data yet — add income/expenses or change the date range.</div>
-    )}
-  </ErrorBoundary>
+  <ChartBlock data={chartData as any} />
 </div>
 
 

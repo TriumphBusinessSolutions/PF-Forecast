@@ -192,7 +192,10 @@ export default function Page(){
 
   return (
     <div style={{maxWidth: 1100, margin: '0 auto', padding: 16}}>
-      <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 12}}>PF Forecast — Dashboard</h1>
+     <h1 style={{fontSize: 22, fontWeight: 700, marginBottom: 12}}>
+  PF Forecast — DASHBOARD v1002
+</h1>
+
 
       {/* Controls */}
       <div style={{display:'flex', flexWrap:'wrap', gap:12, alignItems:'flex-end', marginBottom:12}}>

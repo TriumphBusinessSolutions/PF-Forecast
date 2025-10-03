@@ -1,0 +1,36 @@
+'use client';
+
+import { useState } from 'react';
+
+type ViewType = 'weekly' | 'monthly';
+
+interface ViewToggleProps {
+  onChange: (view: ViewType) => void;
+}
+
+export default function ViewToggle({ onChange }: ViewToggleProps) {
+  const [view, setView] = useState<ViewType>('monthly');
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newView = e.target.value as ViewType;
+    setView(newView);
+    onChange(newView);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor="viewToggle" className="text-sm font-medium">
+        View:
+      </label>
+      <select
+        id="viewToggle"
+        value={view}
+        onChange={handleChange}
+        className="border px-2 py-1 rounded"
+      >
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+    </div>
+  );
+}

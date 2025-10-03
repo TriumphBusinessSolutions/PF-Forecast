@@ -279,23 +279,42 @@ export default function Page() {
     return per;
   }, [lines, periods, scale, startYM, months]);
 
-  const forecastRows = useMemo(() => {
-    const f = runForecast(perTotals, periods, alloc, balances);
-    return periods.map((p) => ({
+  const EMPTY: { income: number; materials: number; direct_subs: number; direct_wages: number; expense: number; loan_debt: number } = {
+  income: 0,
+  materials: 0,
+  direct_subs: 0,
+  direct_wages: 0,
+  expense: 0,
+  loan_debt: 0,
+};
+
+const forecastRows = useMemo(() => {
+  // Always have a row object for every period key
+  const f = runForecast(perTotals, periods, alloc, balances);
+
+  return periods.map((p) => {
+    const g = perTotals[p] ?? EMPTY; // <-- defensive default
+    const income = g.income || 0;
+    const materials = g.materials || 0;
+    const direct = (g.direct_subs || 0) + (g.direct_wages || 0);
+    const expense = (g.expense || 0) + (g.loan_debt || 0);
+
+    return {
       period: p,
-      income: perTotals[p]?.income || 0,
-      materials: perTotals[p]?.materials || 0,
-      direct: (perTotals[p]?.direct_subs || 0) + (perTotals[p]?.direct_wages || 0),
-      expense: (perTotals[p]?.expense || 0) + (perTotals[p]?.loan_debt || 0),
-      realRevenue: f.realRevenue[p] || 0,
-      // Ending balances
-      opEnd: f.snaps[p].operating.end,
-      profitEnd: f.snaps[p].profit.end,
-      ownersEnd: f.snaps[p].owners.end,
-      taxEnd: f.snaps[p].tax.end,
-      vaultEnd: f.snaps[p].vault.end,
-    }));
-  }, [perTotals, periods, alloc, balances]);
+      income,
+      materials,
+      direct,
+      expense,
+      realRevenue: f.realRevenue[p] ?? Math.max(0, income - (materials + direct)),
+      opEnd: f.snaps[p]?.operating?.end ?? 0,
+      profitEnd: f.snaps[p]?.profit?.end ?? 0,
+      ownersEnd: f.snaps[p]?.owners?.end ?? 0,
+      taxEnd: f.snaps[p]?.tax?.end ?? 0,
+      vaultEnd: f.snaps[p]?.vault?.end ?? 0,
+    };
+  });
+}, [perTotals, periods, alloc, balances]);
+
 
   const chartData = useMemo(
     () => forecastRows.map((r) => ({ name: r.period, Operating: r.opEnd, Profit: r.profitEnd, Owners: r.ownersEnd, Tax: r.taxEnd, Vault: r.vaultEnd })),

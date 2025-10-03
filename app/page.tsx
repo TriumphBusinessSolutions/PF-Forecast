@@ -11,10 +11,13 @@ import {
 dayjs.extend(isoWeek);
 
 /* ---------- Supabase ---------- */
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+if (!url || !key) {
+  console.warn('Supabase env vars missing; dashboard will run without data.');
+}
+const supabase = createClient(url || 'https://example.invalid', key || 'anon-key-missing');
+
 
 /* ---------- Types ---------- */
 type CoaGroup = 'income' | 'materials' | 'direct_subs' | 'direct_wages' | 'expense' | 'loan_debt';
@@ -153,6 +156,32 @@ function runForecast(per: PerTotals, periods: PeriodKey[], alloc: Alloc, start: 
   }
 
   return { realRevenue, snaps };
+}
+// Simple client-side error boundary so the UI never white-screens
+import React from 'react';
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; msg?: string }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, msg: String(error?.message || error) };
+  }
+  componentDidCatch(error: any, info: any) {
+    // optional: send to logging later
+    console.error('Client error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 12, border: '1px solid #fee2e2', background: '#fef2f2', color: '#991b1b', borderRadius: 8 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Something went wrong rendering this section.</div>
+          <div style={{ fontSize: 12 }}>{this.state.msg}</div>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
 }
 
 /* ---------- Component ---------- */
@@ -383,30 +412,37 @@ export default function Page() {
       {tab === 'dashboard' && (
         <>
           {/* Graph */}
-          <div style={card}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Projected Ending Balances</div>
-            <div style={{ height: 260 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopOpacity={0.35} />
-                      <stop offset="95%" stopOpacity={0.05} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(v: any) => (Number(v)).toLocaleString(undefined, { style: 'currency', currency: 'USD' })} />
-                  <Area type="monotone" dataKey="Operating" strokeWidth={2} fillOpacity={1} fill="url(#g1)" />
-                  <Area type="monotone" dataKey="Profit" strokeWidth={2} fillOpacity={0.3} />
-                  <Area type="monotone" dataKey="Owners" strokeWidth={2} fillOpacity={0.3} />
-                  <Area type="monotone" dataKey="Tax" strokeWidth={2} fillOpacity={0.3} />
-                  <Area type="monotone" dataKey="Vault" strokeWidth={2} fillOpacity={0.3} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+<div style={card}>
+  <div style={{ fontWeight: 600, marginBottom: 8 }}>Projected Ending Balances</div>
+  <ErrorBoundary>
+    {Array.isArray(chartData) && chartData.length > 0 ? (
+      <div style={{ height: 260, minWidth: 600 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData}>
+            <defs>
+              <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopOpacity={0.35} />
+                <stop offset="95%" stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip formatter={(v: any) => Number(v).toLocaleString(undefined, { style: 'currency', currency: 'USD' })} />
+            <Area type="monotone" dataKey="Operating" strokeWidth={2} fillOpacity={1} fill="url(#g1)" />
+            <Area type="monotone" dataKey="Profit" strokeWidth={2} fillOpacity={0.3} />
+            <Area type="monotone" dataKey="Owners" strokeWidth={2} fillOpacity={0.3} />
+            <Area type="monotone" dataKey="Tax" strokeWidth={2} fillOpacity={0.3} />
+            <Area type="monotone" dataKey="Vault" strokeWidth={2} fillOpacity={0.3} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    ) : (
+      <div style={{ fontSize: 12, color: '#666' }}>No data yet — add income/expenses or change the date range.</div>
+    )}
+  </ErrorBoundary>
+</div>
+
 
           {/* Ledger-like table with groups & add buttons */}
           <div style={card}>

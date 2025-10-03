@@ -4,9 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
 import { createClient } from '@supabase/supabase-js';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart,
-} from 'recharts';
 import dynamic from 'next/dynamic';
 const ChartBlock = dynamic(() => import('./ChartBlock'), { ssr: false });
 
@@ -19,7 +16,6 @@ if (!url || !key) {
   console.warn('Supabase env vars missing; dashboard will run without data.');
 }
 const supabase = createClient(url || 'https://example.invalid', key || 'anon-key-missing');
-
 
 /* ---------- Types ---------- */
 type CoaGroup = 'income' | 'materials' | 'direct_subs' | 'direct_wages' | 'expense' | 'loan_debt';
@@ -48,11 +44,10 @@ type ProjLine = {
 
 type Alloc = { pct_profit: number; pct_owners: number; pct_tax: number; pct_operating: number; pct_vault?: number };
 type Bal = { operating: number; profit: number; owners: number; tax: number; vault: number };
-type PerTotals = Record<
-  PeriodKey,
-  { income: number; materials: number; direct_subs: number; direct_wages: number; expense: number; loan_debt: number }
->;
+type Totals = { income: number; materials: number; direct_subs: number; direct_wages: number; expense: number; loan_debt: number };
+type PerTotals = Record<PeriodKey, Totals>;
 
+/* ---------- Labels ---------- */
 const GROUP_LABELS: Record<CoaGroup, string> = {
   income: 'Income',
   materials: 'Materials',
@@ -64,6 +59,21 @@ const GROUP_LABELS: Record<CoaGroup, string> = {
 
 /* ---------- Helpers ---------- */
 const ym = (d: dayjs.Dayjs) => d.format('YYYY-MM');
+const nz = (v: any, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
+const formatCurrency = (value: number | string) => {
+  if (value === null || value === undefined || value === '') return '$0.00';
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  const safe = Number.isFinite(num) ? num : 0;
+  return safe.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
 
 function weeksInMonthShort(year: number, month1to12: number) {
   const first = dayjs(`${year}-${String(month1to12).padStart(2, '0')}-01`);
@@ -126,19 +136,19 @@ function runForecast(per: PerTotals, periods: PeriodKey[], alloc: Alloc, start: 
   for (const p of periods) {
     const g = per[p] || { income: 0, materials: 0, direct_subs: 0, direct_wages: 0, expense: 0, loan_debt: 0 };
 
-    const rr = Math.max(0, g.income - (g.materials + g.direct_subs + g.direct_wages));
+    const rr = Math.max(0, nz(g.income) - (nz(g.materials) + nz(g.direct_subs) + nz(g.direct_wages)));
     realRevenue[p] = rr;
 
     const a = {
-      profit: rr * (alloc.pct_profit || 0),
-      owners: rr * (alloc.pct_owners || 0),
-      tax: rr * (alloc.pct_tax || 0),
-      operating: rr * (alloc.pct_operating || 0),
-      vault: rr * (alloc.pct_vault || 0),
+      profit: rr * nz(alloc.pct_profit),
+      owners: rr * nz(alloc.pct_owners),
+      tax: rr * nz(alloc.pct_tax),
+      operating: rr * nz(alloc.pct_operating),
+      vault: rr * nz(alloc.pct_vault),
     };
 
     const out = {
-      operating: g.materials + g.direct_subs + g.direct_wages + g.expense + g.loan_debt,
+      operating: nz(g.materials) + nz(g.direct_subs) + nz(g.direct_wages) + nz(g.expense) + nz(g.loan_debt),
       profit: 0,
       owners: 0,
       tax: 0,
@@ -147,9 +157,9 @@ function runForecast(per: PerTotals, periods: PeriodKey[], alloc: Alloc, start: 
 
     const s: any = {};
     for (const acc of accounts) {
-      const begin = (bal as any)[acc];
-      const inflows = (a as any)[acc] ?? 0;
-      const outflows = (out as any)[acc] ?? 0;
+      const begin = nz((bal as any)[acc]);
+      const inflows = nz((a as any)[acc]);
+      const outflows = nz((out as any)[acc]);
       const end = begin + inflows - outflows;
       (bal as any)[acc] = end;
       s[acc] = { begin, inflows, outflows, end };
@@ -159,7 +169,8 @@ function runForecast(per: PerTotals, periods: PeriodKey[], alloc: Alloc, start: 
 
   return { realRevenue, snaps };
 }
-// Simple client-side error boundary so the UI never white-screens
+
+/* ---------- Error boundary (client) ---------- */
 import React from 'react';
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; msg?: string }> {
   constructor(props: any) {
@@ -170,7 +181,6 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
     return { hasError: true, msg: String(error?.message || error) };
   }
   componentDidCatch(error: any, info: any) {
-    // optional: send to logging later
     console.error('Client error:', error, info);
   }
   render() {
@@ -190,18 +200,19 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 export default function Page() {
   const [tab, setTab] = useState<'dashboard' | 'accounts' | 'settings'>('dashboard');
 
-  // You can store the active client UUID in URL later; for now keep state here
-  const [clientId, setClientId] = useState('88c1a8d7-2d1d-4e21-87f8-e4bc4202939e');
+  // active client
+  const [clientId] = useState('88c1a8d7-2d1d-4e21-87f8-e4bc4202939e');
   const [clientName, setClientName] = useState<string>('Client');
 
   const [scale, setScale] = useState<Scale>('monthly');
   const [months, setMonths] = useState(9);
   const [startYM, setStartYM] = useState(dayjs().format('YYYY-MM'));
 
-  // allocations, with robust numeric inputs
+  // allocations
   const [alloc, setAlloc] = useState<Alloc>({ pct_profit: 0.05, pct_owners: 0.30, pct_tax: 0.18, pct_operating: 0.47, pct_vault: 0 });
-  const allocTotal = (alloc.pct_profit + alloc.pct_owners + alloc.pct_tax + alloc.pct_operating + (alloc.pct_vault || 0)) * 100;
+  const allocTotal = (nz(alloc.pct_profit) + nz(alloc.pct_owners) + nz(alloc.pct_tax) + nz(alloc.pct_operating) + nz(alloc.pct_vault)) * 100;
 
+  // starting balances
   const [balances, setBalances] = useState<Bal>({ operating: 0, profit: 0, owners: 0, tax: 0, vault: 0 });
 
   const [coa, setCoa] = useState<CoaAccount[]>([]);
@@ -215,7 +226,6 @@ export default function Page() {
     (async () => {
       if (!clientId) return;
 
-      // client name (fallback to 'Client' if table not present yet)
       try {
         const { data: c } = await supabase.from('clients').select('name').eq('id', clientId).maybeSingle();
         if (c?.name) setClientName(c.name);
@@ -240,7 +250,13 @@ export default function Page() {
         `)
         .eq('client_id', clientId);
 
-      const mapped = (lineRows || []).map((r: any) => ({ ...r, group_key: r.coa_accounts.group_key as CoaGroup }));
+      const mapped = (lineRows || []).map((r: any) => ({
+        ...r,
+        group_key: (r.coa_accounts?.group_key || 'expense') as CoaGroup,
+        amount: nz(r.amount),
+        every_n: r.every_n ?? 1,
+        start_date: r.start_date || dayjs().format('YYYY-MM-01'),
+      }));
       setLines(mapped);
     })();
   }, [clientId]);
@@ -248,76 +264,89 @@ export default function Page() {
   /* compute period table */
   const periods = useMemo(() => buildPeriods(scale, startYM, months), [scale, startYM, months]);
 
+  const EMPTY: Totals = { income: 0, materials: 0, direct_subs: 0, direct_wages: 0, expense: 0, loan_debt: 0 };
+
   const perTotals: PerTotals = useMemo(() => {
     const per: PerTotals = {};
-    const ensure = (k: PeriodKey) => { per[k] ??= { income: 0, materials: 0, direct_subs: 0, direct_wages: 0, expense: 0, loan_debt: 0 }; };
-    periods.forEach(ensure);
+    // seed all periods to avoid undefined reads
+    for (const p of periods) per[p] = { ...EMPTY };
+
+    const ensureKey = (k: PeriodKey) => {
+      if (!per[k]) per[k] = { ...EMPTY };
+    };
+
+    const startBoundary = dayjs(`${startYM}-01`);
+    const endBoundary = startBoundary.add(months, 'month').endOf('month');
+    const inRange = (d: dayjs.Dayjs) =>
+      d.isAfter(startBoundary.subtract(1, 'day')) && d.isBefore(endBoundary.add(1, 'day'));
 
     for (const ln of lines) {
       const every = ln.every_n || 1;
-      const start = dayjs(ln.start_date);
-      const end = ln.end_date ? dayjs(ln.end_date) : dayjs(`${startYM}-01`).add(months, 'month').endOf('month');
-      const inRange = (d: dayjs.Dayjs) => d.isAfter(dayjs(`${startYM}-01`).subtract(1, 'day')) && d.isBefore(end.add(1, 'day'));
+      let d = dayjs(ln.start_date);
+      if (!d.isValid()) continue;
+      const stop = ln.end_date ? dayjs(ln.end_date) : endBoundary;
+      if (!stop.isValid()) continue;
 
       if (ln.recurrence === 'one_off') {
-        if (inRange(start)) {
-          const k = scale === 'monthly' ? ym(start) : weekLabelShortForDate(start);
-          (per[k] as any)[ln.group_key] += ln.amount;
+        if (inRange(d)) {
+          const k = scale === 'monthly' ? ym(d) : weekLabelShortForDate(d);
+          ensureKey(k);
+          (per[k] as any)[ln.group_key] = nz((per[k] as any)[ln.group_key]) + nz(ln.amount);
         }
-      } else {
-        let d = start; let guard = 0;
-        while (d.isBefore(end) || d.isSame(end, 'day')) {
-          if (inRange(d)) {
-            const k = scale === 'monthly' ? ym(d) : weekLabelShortForDate(d);
-            (per[k] as any)[ln.group_key] += ln.amount;
-          }
-          d = step(d, ln.recurrence, every);
-          if (++guard > 1000) break;
+        continue;
+      }
+
+      // recurring
+      let guard = 0;
+      while (d.isBefore(stop) || d.isSame(stop, 'day')) {
+        if (inRange(d)) {
+          const k = scale === 'monthly' ? ym(d) : weekLabelShortForDate(d);
+          ensureKey(k);
+          (per[k] as any)[ln.group_key] = nz((per[k] as any)[ln.group_key]) + nz(ln.amount);
         }
+        d = step(d, ln.recurrence, every);
+        if (++guard > 2000) break;
       }
     }
+
     return per;
   }, [lines, periods, scale, startYM, months]);
 
-  const EMPTY: { income: number; materials: number; direct_subs: number; direct_wages: number; expense: number; loan_debt: number } = {
-  income: 0,
-  materials: 0,
-  direct_subs: 0,
-  direct_wages: 0,
-  expense: 0,
-  loan_debt: 0,
-};
+  const forecastRows = useMemo(() => {
+    const f = runForecast(perTotals, periods, alloc, balances);
+    return periods.map((p) => {
+      const g = perTotals[p] ?? EMPTY;
+      const income = nz(g.income);
+      const materials = nz(g.materials);
+      const direct = nz(g.direct_subs) + nz(g.direct_wages);
+      const expense = nz(g.expense) + nz(g.loan_debt);
 
-const forecastRows = useMemo(() => {
-  // Always have a row object for every period key
-  const f = runForecast(perTotals, periods, alloc, balances);
-
-  return periods.map((p) => {
-    const g = perTotals[p] ?? EMPTY; // <-- defensive default
-    const income = g.income || 0;
-    const materials = g.materials || 0;
-    const direct = (g.direct_subs || 0) + (g.direct_wages || 0);
-    const expense = (g.expense || 0) + (g.loan_debt || 0);
-
-    return {
-      period: p,
-      income,
-      materials,
-      direct,
-      expense,
-      realRevenue: f.realRevenue[p] ?? Math.max(0, income - (materials + direct)),
-      opEnd: f.snaps[p]?.operating?.end ?? 0,
-      profitEnd: f.snaps[p]?.profit?.end ?? 0,
-      ownersEnd: f.snaps[p]?.owners?.end ?? 0,
-      taxEnd: f.snaps[p]?.tax?.end ?? 0,
-      vaultEnd: f.snaps[p]?.vault?.end ?? 0,
-    };
-  });
-}, [perTotals, periods, alloc, balances]);
-
+      return {
+        period: p,
+        income,
+        materials,
+        direct,
+        expense,
+        realRevenue: f.realRevenue[p] ?? Math.max(0, income - (materials + direct)),
+        opEnd: nz(f.snaps[p]?.operating?.end),
+        profitEnd: nz(f.snaps[p]?.profit?.end),
+        ownersEnd: nz(f.snaps[p]?.owners?.end),
+        taxEnd: nz(f.snaps[p]?.tax?.end),
+        vaultEnd: nz(f.snaps[p]?.vault?.end),
+      };
+    });
+  }, [perTotals, periods, alloc, balances]);
 
   const chartData = useMemo(
-    () => forecastRows.map((r) => ({ name: r.period, Operating: r.opEnd, Profit: r.profitEnd, Owners: r.ownersEnd, Tax: r.taxEnd, Vault: r.vaultEnd })),
+    () =>
+      forecastRows.map((r) => ({
+        name: r.period,
+        Operating: r.opEnd,
+        Profit: r.profitEnd,
+        Owners: r.ownersEnd,
+        Tax: r.taxEnd,
+        Vault: r.vaultEnd,
+      })),
     [forecastRows]
   );
 
@@ -371,10 +400,11 @@ const forecastRows = useMemo(() => {
                   style={{ ...inpt, width: 90 }}
                   type="number"
                   step="0.01"
-                  value={((alloc as any)[k] || 0) * 100}
+                  value={Math.round(nz((alloc as any)[k]) * 10000) / 100} // show percent w/ 2 decimals
                   onChange={(e) => {
-                    const v = Math.max(0, parseFloat(e.target.value || '0')) / 100;
-                    setAlloc((a) => ({ ...a, [k]: v }));
+                    const raw = e.target.value;
+                    const pct = Math.max(0, nz(raw) / 100); // convert display % -> decimal
+                    setAlloc((a) => ({ ...a, [k]: pct } as any));
                   }}
                 />
               </label>
@@ -396,10 +426,11 @@ const forecastRows = useMemo(() => {
                 <label key={k} style={{ display: 'flex', flexDirection: 'column', fontSize: 12 }}>
                   {k}
                   <input
-                    style={{ ...inpt, width: 110 }}
+                    style={{ ...inpt, width: 130 }}
                     type="number"
-                    value={(balances as any)[k]}
-                    onChange={(e) => setBalances((b) => ({ ...b, [k]: parseFloat(e.target.value || '0') }))}
+                    step="0.01"
+                    value={nz((balances as any)[k]).toString()}
+                    onChange={(e) => setBalances((b) => ({ ...b, [k]: nz(e.target.value) }))}
                   />
                 </label>
               ))}
@@ -432,12 +463,13 @@ const forecastRows = useMemo(() => {
       {/* Dashboard */}
       {tab === 'dashboard' && (
         <>
-         {/* Graph */}
-<div style={card}>
-  <div style={{ fontWeight: 600, marginBottom: 8 }}>Projected Ending Balances</div>
-  <ChartBlock data={chartData as any} />
-</div>
-
+          {/* Graph */}
+          <div style={card}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Projected Ending Balances</div>
+            <ErrorBoundary>
+              <ChartBlock data={chartData as any} />
+            </ErrorBoundary>
+          </div>
 
           {/* Ledger-like table with groups & add buttons */}
           <div style={card}>
@@ -459,7 +491,9 @@ const forecastRows = useMemo(() => {
                     <td style={{ ...td, fontWeight: 600 }}>Starting Balances</td>
                     {forecastRows.map((_, i) => (
                       <td key={i} style={{ ...td, textAlign: 'right', color: '#666' }}>
-                        {i === 0 ? Object.values(balances).reduce((a, b) => a + (b || 0), 0).toLocaleString(undefined, { style: 'currency', currency: 'USD' }) : '—'}
+                        {i === 0 ? formatCurrency(
+                          nz(balances.operating) + nz(balances.profit) + nz(balances.owners) + nz(balances.tax) + nz(balances.vault)
+                        ) : '—'}
                       </td>
                     ))}
                     <td style={td}></td>
@@ -474,7 +508,11 @@ const forecastRows = useMemo(() => {
                   {/* Real Revenue */}
                   <tr>
                     <td style={{ ...td, fontWeight: 700 }}>Real Revenue</td>
-                    {forecastRows.map((r) => <td key={r.period} style={{ ...td, textAlign: 'right' }}>{r.realRevenue.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</td>)}
+                    {forecastRows.map((r) => (
+                      <td key={r.period} style={{ ...td, textAlign: 'right' }}>
+                        {formatCurrency(r.realRevenue)}
+                      </td>
+                    ))}
                     <td style={td}></td>
                   </tr>
 
@@ -491,7 +529,11 @@ const forecastRows = useMemo(() => {
                   ].map(([label, key]) => (
                     <tr key={key}>
                       <td style={{ ...td, fontWeight: 700 }}>{label}</td>
-                      {forecastRows.map((r) => <td key={r.period} style={{ ...td, textAlign: 'right' }}>{(r as any)[key].toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</td>)}
+                      {forecastRows.map((r) => (
+                        <td key={r.period} style={{ ...td, textAlign: 'right' }}>
+                          {formatCurrency((r as any)[key])}
+                        </td>
+                      ))}
                       <td style={td}></td>
                     </tr>
                   ))}
@@ -537,8 +579,8 @@ const forecastRows = useMemo(() => {
                 open: true,
                 targetGroup:
                   key === 'income' ? 'income' :
-                    key === 'expense' ? 'expense' :
-                      'materials' /* default under direct costs; user can change in modal */,
+                  key === 'expense' ? 'expense' :
+                  'materials', // default under direct costs; user can change in modal
               })
             }
             style={{ marginLeft: 8, ...btnGhost }}
@@ -546,7 +588,7 @@ const forecastRows = useMemo(() => {
         </td>
         {forecastRows.map((r) => (
           <td key={r.period} style={{ ...td, textAlign: 'right' }}>
-            {picker(r).toLocaleString(undefined, { style: 'currency', currency: 'USD' })}
+            {formatCurrency(picker(r))}
           </td>
         ))}
         <td style={td}></td>
@@ -583,7 +625,7 @@ function AddLineModal({
   }, [group, coa]);
 
   const save = async () => {
-    if (!coaId || !name) { alert('Pick an account and name'); return; }
+    if (!coaId || !name || !Number.isFinite(Number(amount))) { alert('Pick an account, enter a name, and a numeric amount'); return; }
     const { data, error } = await supabase.from('proj_lines').insert({
       client_id: clientId, coa_account_id: coaId, kind, name, amount, recurrence, every_n, start_date,
     }).select(`
@@ -614,7 +656,7 @@ function AddLineModal({
             </select>
           </label>
           <label style={lab}>Name <input style={inpt} value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label style={lab}>Amount <input style={inpt} type="number" value={amount} onChange={(e) => setAmount(parseFloat(e.target.value || '0'))} /></label>
+          <label style={lab}>Amount <input style={inpt} type="number" step="0.01" value={amount} onChange={(e) => setAmount(nz(e.target.value))} /></label>
           <label style={lab}>Recurrence
             <select style={inpt} value={recurrence} onChange={(e) => setRecurrence(e.target.value as any)}>
               <option value="one_off">One-off</option>
@@ -626,7 +668,7 @@ function AddLineModal({
               <option value="annual">Annual</option>
             </select>
           </label>
-          <label style={lab}>Every N <input style={inpt} type="number" value={every_n} onChange={(e) => setEvery(parseInt(e.target.value || '1'))} /></label>
+          <label style={lab}>Every N <input style={inpt} type="number" value={every_n} onChange={(e) => setEvery(parseInt(e.target.value || '1', 10))} /></label>
           <label style={lab}>Start Date <input style={inpt} type="date" value={start_date} onChange={(e) => setStart(e.target.value)} /></label>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -658,7 +700,7 @@ function AccountDetailModal({
                   <td style={td}>{l.name}</td>
                   <td style={td}>{l.kind}</td>
                   <td style={td}>{l.recurrence}{l.every_n ? ` / ${l.every_n}` : ''}</td>
-                  <td style={{ ...td, textAlign: 'right' }}>{l.amount.toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</td>
+                  <td style={{ ...td, textAlign: 'right' }}>{formatCurrency(l.amount)}</td>
                   <td style={td}>{l.start_date}</td>
                 </tr>
               ))}

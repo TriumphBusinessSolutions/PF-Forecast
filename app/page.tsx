@@ -1,20 +1,21 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import dayjs from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
 import { createClient } from '@supabase/supabase-js';
-import dynamic from 'next/dynamic';
-const ChartBlock = dynamic(() => import('./ChartBlock'), { ssr: false });
+
+/* recharts (client safe because this file is a client component) */
+import {
+  AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
 
 dayjs.extend(isoWeek);
 
 /* ---------- Supabase ---------- */
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-if (!url || !key) {
-  console.warn('Supabase env vars missing; dashboard will run without data.');
-}
+if (!url || !key) console.warn('Supabase env vars missing; dashboard will run without remote data.');
 const supabase = createClient(url || 'https://example.invalid', key || 'anon-key-missing');
 
 /* ---------- Types ---------- */
@@ -47,18 +48,7 @@ type Bal = { operating: number; profit: number; owners: number; tax: number; vau
 type Totals = { income: number; materials: number; direct_subs: number; direct_wages: number; expense: number; loan_debt: number };
 type PerTotals = Record<PeriodKey, Totals>;
 
-/* ---------- Labels ---------- */
-const GROUP_LABELS: Record<CoaGroup, string> = {
-  income: 'Income',
-  materials: 'Materials',
-  direct_subs: 'Direct Subcontractors',
-  direct_wages: 'Direct Wages',
-  expense: 'Operating Expenses',
-  loan_debt: 'Loan/Debt',
-};
-
 /* ---------- Helpers ---------- */
-const ym = (d: dayjs.Dayjs) => d.format('YYYY-MM');
 const nz = (v: any, d = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : d;
@@ -74,6 +64,13 @@ const formatCurrency = (value: number | string) => {
     maximumFractionDigits: 2,
   });
 };
+const mmmYY = (ym: string) => {
+  // ym may be 'YYYY-MM' or a week label; we only reformat YYYY-MM here
+  if (/^\d{4}-\d{2}$/.test(ym)) return dayjs(`${ym}-01`).format('MMM-YY');
+  return ym;
+};
+
+const ym = (d: dayjs.Dayjs) => d.format('YYYY-MM');
 
 function weeksInMonthShort(year: number, month1to12: number) {
   const first = dayjs(`${year}-${String(month1to12).padStart(2, '0')}-01`);
@@ -89,11 +86,6 @@ function weeksInMonthShort(year: number, month1to12: number) {
     mon = mon.add(1, 'week');
   }
   return out;
-}
-function weekLabelShortForDate(d: dayjs.Dayjs) {
-  const mon = d.isoWeekday() === 1 ? d : d.isoWeekday(8);
-  const sun = mon.add(6, 'day');
-  return `${mon.format('MMM D')}–${sun.format(mon.month() === sun.month() ? 'D' : 'MMM D')}`;
 }
 
 function buildPeriods(scale: Scale, startYM: string, months: number): PeriodKey[] {
@@ -127,19 +119,19 @@ function step(d: dayjs.Dayjs, recur: ProjLine['recurrence'], every: number) {
 
 /* ---------- Forecast core ---------- */
 function runForecast(per: PerTotals, periods: PeriodKey[], alloc: Alloc, start: Bal) {
+  const snaps: Record<PeriodKey, { operating: number; profit: number; owners: number; tax: number; vault: number }> = {};
   const realRevenue: Record<PeriodKey, number> = {};
-  const snaps: Record<PeriodKey, { operating: any; profit: any; owners: any; tax: any; vault: any }> = {};
 
   const bal = { ...start };
-  const accounts = ['operating', 'profit', 'owners', 'tax', 'vault'] as const;
 
   for (const p of periods) {
     const g = per[p] || { income: 0, materials: 0, direct_subs: 0, direct_wages: 0, expense: 0, loan_debt: 0 };
 
+    // flows for this period
     const rr = Math.max(0, nz(g.income) - (nz(g.materials) + nz(g.direct_subs) + nz(g.direct_wages)));
     realRevenue[p] = rr;
 
-    const a = {
+    const inflow = {
       profit: rr * nz(alloc.pct_profit),
       owners: rr * nz(alloc.pct_owners),
       tax: rr * nz(alloc.pct_tax),
@@ -147,99 +139,72 @@ function runForecast(per: PerTotals, periods: PeriodKey[], alloc: Alloc, start: 
       vault: rr * nz(alloc.pct_vault),
     };
 
-    const out = {
-      operating: nz(g.materials) + nz(g.direct_subs) + nz(g.direct_wages) + nz(g.expense) + nz(g.loan_debt),
-      profit: 0,
-      owners: 0,
-      tax: 0,
-      vault: 0,
+    const outflowOperating = nz(g.materials) + nz(g.direct_subs) + nz(g.direct_wages) + nz(g.expense) + nz(g.loan_debt);
+
+    // roll-forward per account
+    const next = {
+      operating: bal.operating + nz(inflow.operating) - outflowOperating,
+      profit:    bal.profit    + nz(inflow.profit),
+      owners:    bal.owners    + nz(inflow.owners),
+      tax:       bal.tax       + nz(inflow.tax),
+      vault:     bal.vault     + nz(inflow.vault),
     };
 
-    const s: any = {};
-    for (const acc of accounts) {
-      const begin = nz((bal as any)[acc]);
-      const inflows = nz((a as any)[acc]);
-      const outflows = nz((out as any)[acc]);
-      const end = begin + inflows - outflows;
-      (bal as any)[acc] = end;
-      s[acc] = { begin, inflows, outflows, end };
-    }
-    snaps[p] = s;
+    bal.operating = next.operating;
+    bal.profit    = next.profit;
+    bal.owners    = next.owners;
+    bal.tax       = next.tax;
+    bal.vault     = next.vault;
+
+    snaps[p] = next;
   }
 
-  return { realRevenue, snaps };
+  return { snaps, realRevenue };
 }
 
-/* ---------- Error boundary (client) ---------- */
-import React from 'react';
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; msg?: string }> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, msg: String(error?.message || error) };
-  }
-  componentDidCatch(error: any, info: any) {
-    console.error('Client error:', error, info);
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: 12, border: '1px solid #fee2e2', background: '#fef2f2', color: '#991b1b', borderRadius: 8 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Something went wrong rendering this section.</div>
-          <div style={{ fontSize: 12 }}>{this.state.msg}</div>
-        </div>
-      );
-    }
-    return this.props.children as any;
-  }
-}
-
-/* ---------- Component ---------- */
+/* ---------- Page ---------- */
 export default function Page() {
   const [tab, setTab] = useState<'dashboard' | 'accounts' | 'settings'>('dashboard');
 
-  // active client
+  // active client (hard-coded for now)
   const [clientId] = useState('88c1a8d7-2d1d-4e21-87f8-e4bc4202939e');
-  const [clientName, setClientName] = useState<string>('Client');
+  const [clientName, setClientName] = useState('Test Client');
 
   const [scale, setScale] = useState<Scale>('monthly');
   const [months, setMonths] = useState(9);
   const [startYM, setStartYM] = useState(dayjs().format('YYYY-MM'));
 
-  // allocations
+  // allocations (decimals)
   const [alloc, setAlloc] = useState<Alloc>({ pct_profit: 0.05, pct_owners: 0.30, pct_tax: 0.18, pct_operating: 0.47, pct_vault: 0 });
   const allocTotal = (nz(alloc.pct_profit) + nz(alloc.pct_owners) + nz(alloc.pct_tax) + nz(alloc.pct_operating) + nz(alloc.pct_vault)) * 100;
 
   // starting balances
   const [balances, setBalances] = useState<Bal>({ operating: 0, profit: 0, owners: 0, tax: 0, vault: 0 });
 
+  // demo color customization for chart
+  const [colors, setColors] = useState({
+    total: '#1f77b4',
+    operating: '#1f77b4',
+    profit: '#2ca02c',
+    owners: '#9467bd',
+    tax: '#d62728',
+    vault: '#8c564b',
+  });
+  const [chartMode, setChartMode] = useState<'total' | 'accounts'>('total');
+
   const [coa, setCoa] = useState<CoaAccount[]>([]);
   const [lines, setLines] = useState<ProjLine[]>([]);
 
-  const [showAddModal, setShowAddModal] = useState<{ open: boolean; targetGroup?: CoaGroup }>({ open: false });
-  const [detail, setDetail] = useState<{ open: boolean; account?: CoaAccount }>({ open: false });
-
-  /* load client name, COA, and lines */
+  // load client name + basic data (if present)
   useEffect(() => {
     (async () => {
-      if (!clientId) return;
-
       try {
         const { data: c } = await supabase.from('clients').select('name').eq('id', clientId).maybeSingle();
         if (c?.name) setClientName(c.name);
-      } catch {
-        setClientName('Client');
-      }
-
+      } catch {/* ignore */}
       const { data: coaRows } = await supabase
-        .from('coa_accounts')
-        .select('id,name,group_key')
-        .eq('client_id', clientId)
-        .order('group_key', { ascending: true })
-        .order('name', { ascending: true });
-
+        .from('coa_accounts').select('id,name,group_key')
+        .eq('client_id', clientId).order('group_key', { ascending: true }).order('name', { ascending: true });
       setCoa(coaRows || []);
 
       const { data: lineRows } = await supabase
@@ -261,24 +226,20 @@ export default function Page() {
     })();
   }, [clientId]);
 
-  /* compute period table */
+  /* periods */
   const periods = useMemo(() => buildPeriods(scale, startYM, months), [scale, startYM, months]);
 
+  /* build per-period totals from projection lines */
   const EMPTY: Totals = { income: 0, materials: 0, direct_subs: 0, direct_wages: 0, expense: 0, loan_debt: 0 };
-
   const perTotals: PerTotals = useMemo(() => {
     const per: PerTotals = {};
-    // seed all periods to avoid undefined reads
     for (const p of periods) per[p] = { ...EMPTY };
 
-    const ensureKey = (k: PeriodKey) => {
-      if (!per[k]) per[k] = { ...EMPTY };
-    };
+    const ensure = (k: PeriodKey) => { if (!per[k]) per[k] = { ...EMPTY }; };
 
     const startBoundary = dayjs(`${startYM}-01`);
     const endBoundary = startBoundary.add(months, 'month').endOf('month');
-    const inRange = (d: dayjs.Dayjs) =>
-      d.isAfter(startBoundary.subtract(1, 'day')) && d.isBefore(endBoundary.add(1, 'day'));
+    const inRange = (d: dayjs.Dayjs) => d.isAfter(startBoundary.subtract(1, 'day')) && d.isBefore(endBoundary.add(1, 'day'));
 
     for (const ln of lines) {
       const every = ln.every_n || 1;
@@ -287,70 +248,61 @@ export default function Page() {
       const stop = ln.end_date ? dayjs(ln.end_date) : endBoundary;
       if (!stop.isValid()) continue;
 
+      const bump = (k: PeriodKey) => {
+        ensure(k);
+        (per[k] as any)[ln.group_key] = nz((per[k] as any)[ln.group_key]) + nz(ln.amount);
+      };
+
       if (ln.recurrence === 'one_off') {
-        if (inRange(d)) {
-          const k = scale === 'monthly' ? ym(d) : weekLabelShortForDate(d);
-          ensureKey(k);
-          (per[k] as any)[ln.group_key] = nz((per[k] as any)[ln.group_key]) + nz(ln.amount);
-        }
+        if (inRange(d)) bump(scale === 'monthly' ? ym(d) : d.format('MMM D'));
         continue;
       }
 
-      // recurring
       let guard = 0;
       while (d.isBefore(stop) || d.isSame(stop, 'day')) {
-        if (inRange(d)) {
-          const k = scale === 'monthly' ? ym(d) : weekLabelShortForDate(d);
-          ensureKey(k);
-          (per[k] as any)[ln.group_key] = nz((per[k] as any)[ln.group_key]) + nz(ln.amount);
-        }
+        if (inRange(d)) bump(scale === 'monthly' ? ym(d) : d.format('MMM D'));
         d = step(d, ln.recurrence, every);
         if (++guard > 2000) break;
       }
     }
-
     return per;
   }, [lines, periods, scale, startYM, months]);
 
-  const forecastRows = useMemo(() => {
-    const f = runForecast(perTotals, periods, alloc, balances);
-    return periods.map((p) => {
-      const g = perTotals[p] ?? EMPTY;
-      const income = nz(g.income);
-      const materials = nz(g.materials);
-      const direct = nz(g.direct_subs) + nz(g.direct_wages);
-      const expense = nz(g.expense) + nz(g.loan_debt);
+  /* forecast (roll-forward) */
+  const forecast = useMemo(() => runForecast(perTotals, periods, alloc, balances), [perTotals, periods, alloc, balances]);
 
+  /* chart data */
+  const chartData = useMemo(() => {
+    return periods.map((p) => {
+      const s = forecast.snaps[p] || { operating: 0, profit: 0, owners: 0, tax: 0, vault: 0 };
+      const total = s.operating + s.profit + s.owners + s.tax + s.vault;
       return {
-        period: p,
-        income,
-        materials,
-        direct,
-        expense,
-        realRevenue: f.realRevenue[p] ?? Math.max(0, income - (materials + direct)),
-        opEnd: nz(f.snaps[p]?.operating?.end),
-        profitEnd: nz(f.snaps[p]?.profit?.end),
-        ownersEnd: nz(f.snaps[p]?.owners?.end),
-        taxEnd: nz(f.snaps[p]?.tax?.end),
-        vaultEnd: nz(f.snaps[p]?.vault?.end),
+        name: mmmYY(p),
+        Total: total,
+        Operating: s.operating,
+        Profit: s.profit,
+        Owners: s.owners,
+        Tax: s.tax,
+        Vault: s.vault,
       };
     });
-  }, [perTotals, periods, alloc, balances]);
+  }, [periods, forecast]);
 
-  const chartData = useMemo(
-    () =>
-      forecastRows.map((r) => ({
-        name: r.period,
-        Operating: r.opEnd,
-        Profit: r.profitEnd,
-        Owners: r.ownersEnd,
-        Tax: r.taxEnd,
-        Vault: r.vaultEnd,
-      })),
-    [forecastRows]
-  );
+  /* table rows (ending balances only) */
+  const endingTable = useMemo(() => {
+    return periods.map((p) => {
+      const s = forecast.snaps[p] || { operating: 0, profit: 0, owners: 0, tax: 0, vault: 0 };
+      return {
+        period: mmmYY(p),
+        opEnd: s.operating,
+        profitEnd: s.profit,
+        ownersEnd: s.owners,
+        taxEnd: s.tax,
+        vaultEnd: s.vault,
+      };
+    });
+  }, [periods, forecast]);
 
-  /* ---------- UI ---------- */
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: 16 }}>
       {/* Top Bar */}
@@ -364,7 +316,7 @@ export default function Page() {
               <option value="weekly">Weekly (Mon–Sun)</option>
             </select>
             &nbsp; • Horizon:&nbsp;
-            <select value={months} onChange={(e) => setMonths(parseInt(e.target.value))} style={inpt}>
+            <select value={months} onChange={(e) => setMonths(parseInt(e.target.value, 10))} style={inpt}>
               <option value={9}>9</option><option value={12}>12</option><option value={18}>18</option><option value={24}>24</option>
             </select>
             &nbsp; • Start&nbsp;
@@ -372,7 +324,6 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div style={{ display: 'flex', gap: 8 }}>
           {['dashboard', 'accounts', 'settings'].map((t) => (
             <button key={t} onClick={() => setTab(t as any)} style={{ ...btn, background: tab === t ? '#111' : '#fff', color: tab === t ? '#fff' : '#111' }}>
@@ -382,7 +333,113 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Settings (Current vs Target, Allocations) */}
+      {/* DASHBOARD */}
+      {tab === 'dashboard' && (
+        <>
+          {/* Chart card with toggle + color pickers */}
+          <div style={card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontWeight: 600 }}>Projected Ending Balances</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <label style={{ fontSize: 12 }}>
+                  Mode:&nbsp;
+                  <select value={chartMode} onChange={(e) => setChartMode(e.target.value as any)} style={{ ...inpt, padding: '4px 6px' }}>
+                    <option value="total">Total balance</option>
+                    <option value="accounts">Individual accounts</option>
+                  </select>
+                </label>
+                {/* quick color pickers */}
+                {chartMode === 'accounts' && (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {(['operating','profit','owners','tax','vault'] as const).map(k => (
+                      <label key={k} style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {k[0].toUpperCase()+k.slice(1)} <input type="color" value={(colors as any)[k]} onChange={(e) => setColors(c => ({ ...c, [k]: e.target.value }))} />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ width: '100%', height: 280 }}>
+              <ResponsiveContainer>
+                {chartMode === 'total' ? (
+                  <AreaChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" tickFormatter={(v) => v} />
+                    <YAxis tickFormatter={(v) => formatCurrency(v)} />
+                    <Tooltip formatter={(v:any) => formatCurrency(v)} />
+                    <Area type="monotone" dataKey="Total" stroke={colors.total} fill={colors.total + '22'} />
+                  </AreaChart>
+                ) : (
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis tickFormatter={(v) => formatCurrency(v)} />
+                    <Tooltip formatter={(v:any) => formatCurrency(v)} />
+                    <Legend />
+                    <Line type="monotone" dataKey="Operating" stroke={colors.operating} dot={false} />
+                    <Line type="monotone" dataKey="Profit"    stroke={colors.profit}    dot={false} />
+                    <Line type="monotone" dataKey="Owners"    stroke={colors.owners}    dot={false} />
+                    <Line type="monotone" dataKey="Tax"       stroke={colors.tax}       dot={false} />
+                    <Line type="monotone" dataKey="Vault"     stroke={colors.vault}     dot={false} />
+                  </LineChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Ending balances table */}
+          <div style={card}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Ending Bank Balances (roll-forward)</div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Row</th>
+                    {endingTable.map((r) => (
+                      <th key={r.period} style={{ ...th, textAlign: 'right' }}>{r.period}</th>
+                    ))}
+                    <th style={th}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['Operating (End)', 'opEnd'] as const,
+                    ['Profit (End)', 'profitEnd'] as const,
+                    ["Owner's (End)", 'ownersEnd'] as const,
+                    ['Tax (End)', 'taxEnd'] as const,
+                    ['Vault (End)', 'vaultEnd'] as const,
+                  ].map(([label, key]) => (
+                    <tr key={key}>
+                      <td style={{ ...td, fontWeight: 700 }}>{label}</td>
+                      {endingTable.map((r) => (
+                        <td key={r.period} style={{ ...td, textAlign: 'right' }}>
+                          {formatCurrency((r as any)[key])}
+                        </td>
+                      ))}
+                      <td style={td}></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ACCOUNTS placeholder (we'll wire drill-down next) */}
+      {tab === 'accounts' && (
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Accounts</div>
+          <div style={{ color: '#555', fontSize: 13 }}>
+            This tab will host the **drill-down view** you described: Beginning Balance → Inflows (allocations & custom inflows) → Outflows (line items) → Ending Balance,
+            with the chart focusing on the selected account and the forecast working monthly or weekly.
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS (allocations + balances) */}
       {tab === 'settings' && (
         <div style={card}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Allocations (% of Real Revenue)</div>
@@ -400,10 +457,9 @@ export default function Page() {
                   style={{ ...inpt, width: 90 }}
                   type="number"
                   step="0.01"
-                  value={Math.round(nz((alloc as any)[k]) * 10000) / 100} // show percent w/ 2 decimals
+                  value={Math.round(nz((alloc as any)[k]) * 10000) / 100}
                   onChange={(e) => {
-                    const raw = e.target.value;
-                    const pct = Math.max(0, nz(raw) / 100); // convert display % -> decimal
+                    const pct = Math.max(0, nz(e.target.value) / 100);
                     setAlloc((a) => ({ ...a, [k]: pct } as any));
                   }}
                 />
@@ -413,10 +469,6 @@ export default function Page() {
               Total: {allocTotal.toFixed(2)}%
               {allocTotal !== 100 && <span style={{ color: '#b91c1c' }}> — should equal 100%</span>}
             </div>
-          </div>
-
-          <div style={{ marginTop: 14, fontSize: 12, color: '#444' }}>
-            <strong>Current vs Target</strong> — Add target TAPs here later; for now this panel stores the live allocation % used by the forecast.
           </div>
 
           <div style={{ marginTop: 14 }}>
@@ -436,282 +488,12 @@ export default function Page() {
               ))}
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Accounts (COA manager) */}
-      {tab === 'accounts' && (
-        <div style={card}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Chart of Accounts</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 12 }}>
-            {(['income', 'materials', 'direct_subs', 'direct_wages', 'expense', 'loan_debt'] as CoaGroup[]).map((g) => {
-              const items = coa.filter((c) => c.group_key === g);
-              return (
-                <div key={g}>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{GROUP_LABELS[g]}</div>
-                  <ul style={{ fontSize: 13, marginLeft: 18 }}>
-                    {items.map((i) => <li key={i.id}>{i.name}</li>)}
-                    {items.length === 0 && <li style={{ color: '#999' }}>None yet</li>}
-                  </ul>
-                </div>
-              );
-            })}
+          <div style={{ marginTop: 16, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <label style={{ fontSize: 12 }}>Total color <input type="color" value={colors.total} onChange={(e) => setColors(c => ({ ...c, total: e.target.value }))} /></label>
           </div>
         </div>
       )}
-
-      {/* Dashboard */}
-      {tab === 'dashboard' && (
-        <>
-          {/* Graph */}
-          <div style={card}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Projected Ending Balances</div>
-            <ErrorBoundary>
-              <ChartBlock data={chartData as any} />
-            </ErrorBoundary>
-          </div>
-
-          {/* Ledger-like table with groups & add buttons */}
-          <div style={card}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>Forecast Table</div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Row</th>
-                    {forecastRows.map((r) => (
-                      <th key={r.period} style={{ ...th, textAlign: 'right' }}>{r.period}</th>
-                    ))}
-                    <th style={th}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Starting balances row */}
-                  <tr>
-                    <td style={{ ...td, fontWeight: 600 }}>Starting Balances</td>
-                    {forecastRows.map((_, i) => (
-                      <td key={i} style={{ ...td, textAlign: 'right', color: '#666' }}>
-                        {i === 0 ? formatCurrency(
-                          nz(balances.operating) + nz(balances.profit) + nz(balances.owners) + nz(balances.tax) + nz(balances.vault)
-                        ) : '—'}
-                      </td>
-                    ))}
-                    <td style={td}></td>
-                  </tr>
-
-                  {/* Income */}
-                  {renderGroup('Income', 'income', (p) => p.income)}
-
-                  {/* Direct Costs (materials + subs + wages) */}
-                  {renderGroup('Direct Costs', 'directCosts', (p) => p.materials + p.direct)}
-
-                  {/* Real Revenue */}
-                  <tr>
-                    <td style={{ ...td, fontWeight: 700 }}>Real Revenue</td>
-                    {forecastRows.map((r) => (
-                      <td key={r.period} style={{ ...td, textAlign: 'right' }}>
-                        {formatCurrency(r.realRevenue)}
-                      </td>
-                    ))}
-                    <td style={td}></td>
-                  </tr>
-
-                  {/* Operating Expenses (incl. loan/debt) */}
-                  {renderGroup('Operating Expenses', 'expense', (p) => p.expense)}
-
-                  {/* Ending balances by PF accounts */}
-                  {[
-                    ['Operating (End)', 'opEnd'] as const,
-                    ['Profit (End)', 'profitEnd'] as const,
-                    ["Owner's (End)", 'ownersEnd'] as const,
-                    ['Tax (End)', 'taxEnd'] as const,
-                    ['Vault (End)', 'vaultEnd'] as const,
-                  ].map(([label, key]) => (
-                    <tr key={key}>
-                      <td style={{ ...td, fontWeight: 700 }}>{label}</td>
-                      {forecastRows.map((r) => (
-                        <td key={r.period} style={{ ...td, textAlign: 'right' }}>
-                          {formatCurrency((r as any)[key])}
-                        </td>
-                      ))}
-                      <td style={td}></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Add Line Modal */}
-      {showAddModal.open && (
-        <AddLineModal
-          clientId={clientId}
-          group={showAddModal.targetGroup}
-          coa={coa}
-          onClose={() => setShowAddModal({ open: false })}
-          onAdded={(ln) => setLines((prev) => [...prev, ln])}
-        />
-      )}
-
-      {/* Account Detail Modal */}
-      {detail.open && detail.account && (
-        <AccountDetailModal
-          account={detail.account}
-          lines={lines.filter((l) => l.coa_account_id === detail.account!.id)}
-          onClose={() => setDetail({ open: false })}
-        />
-      )}
-    </div>
-  );
-
-  /* ---- local render helpers ---- */
-  function renderGroup(label: string, key: 'income' | 'directCosts' | 'expense', picker: (r: any) => number) {
-    return (
-      <tr>
-        <td style={{ ...td, fontWeight: 700 }}>
-          {label}
-          <button
-            title={`Add to ${label}`}
-            onClick={() =>
-              setShowAddModal({
-                open: true,
-                targetGroup:
-                  key === 'income' ? 'income' :
-                  key === 'expense' ? 'expense' :
-                  'materials', // default under direct costs; user can change in modal
-              })
-            }
-            style={{ marginLeft: 8, ...btnGhost }}
-          >+</button>
-        </td>
-        {forecastRows.map((r) => (
-          <td key={r.period} style={{ ...td, textAlign: 'right' }}>
-            {formatCurrency(picker(r))}
-          </td>
-        ))}
-        <td style={td}></td>
-      </tr>
-    );
-  }
-}
-
-/* ---------- Small components ---------- */
-
-function AddLineModal({
-  clientId, group, coa, onClose, onAdded,
-}: {
-  clientId: string;
-  group?: CoaGroup;
-  coa: CoaAccount[];
-  onClose: () => void;
-  onAdded: (l: ProjLine) => void;
-}) {
-  const [coaId, setCoaId] = useState('');
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState<LineKind>('income');
-  const [amount, setAmount] = useState<number>(0);
-  const [recurrence, setRecurrence] = useState<'one_off' | 'monthly' | 'weekly' | 'biweekly' | 'quarterly' | 'semiannual' | 'annual'>('monthly');
-  const [every_n, setEvery] = useState<number>(1);
-  const [start_date, setStart] = useState<string>(dayjs().format('YYYY-MM-01'));
-
-  useEffect(() => {
-    if (group) {
-      const first = coa.find((c) => c.group_key === group);
-      if (first) setCoaId(first.id);
-      setKind(group === 'income' ? 'income' : 'expense');
-    }
-  }, [group, coa]);
-
-  const save = async () => {
-    if (!coaId || !name || !Number.isFinite(Number(amount))) { alert('Pick an account, enter a name, and a numeric amount'); return; }
-    const { data, error } = await supabase.from('proj_lines').insert({
-      client_id: clientId, coa_account_id: coaId, kind, name, amount, recurrence, every_n, start_date,
-    }).select(`
-      id, client_id, coa_account_id, kind, name, amount, recurrence, every_n, start_date, end_date, pct_of_link, linked_to, increase_pct, increase_interval,
-      coa_accounts ( group_key )
-    `).single();
-    if (error) { alert(error.message); return; }
-    const mapped = { ...(data as any), group_key: (data as any).coa_accounts.group_key as CoaGroup } as ProjLine;
-    onAdded(mapped);
-    onClose();
-  };
-
-  return (
-    <div style={modalBackdrop}>
-      <div style={modalBody}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Add Projection Line</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <label style={lab}>Account
-            <select style={inpt} value={coaId} onChange={(e) => setCoaId(e.target.value)}>
-              <option value="">Select…</option>
-              {coa.map((c) => <option key={c.id} value={c.id}>{c.name} ({GROUP_LABELS[c.group_key]})</option>)}
-            </select>
-          </label>
-          <label style={lab}>Kind
-            <select style={inpt} value={kind} onChange={(e) => setKind(e.target.value as LineKind)}>
-              <option value="income">Income</option>
-              <option value="expense">Expense</option>
-            </select>
-          </label>
-          <label style={lab}>Name <input style={inpt} value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label style={lab}>Amount <input style={inpt} type="number" step="0.01" value={amount} onChange={(e) => setAmount(nz(e.target.value))} /></label>
-          <label style={lab}>Recurrence
-            <select style={inpt} value={recurrence} onChange={(e) => setRecurrence(e.target.value as any)}>
-              <option value="one_off">One-off</option>
-              <option value="monthly">Monthly</option>
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Bi-weekly</option>
-              <option value="quarterly">Quarterly</option>
-              <option value="semiannual">Semi-annual</option>
-              <option value="annual">Annual</option>
-            </select>
-          </label>
-          <label style={lab}>Every N <input style={inpt} type="number" value={every_n} onChange={(e) => setEvery(parseInt(e.target.value || '1', 10))} /></label>
-          <label style={lab}>Start Date <input style={inpt} type="date" value={start_date} onChange={(e) => setStart(e.target.value)} /></label>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
-          <button style={btnGhost} onClick={onClose}>Cancel</button>
-          <button style={btn} onClick={save}>Save</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AccountDetailModal({
-  account, lines, onClose,
-}: { account: CoaAccount; lines: ProjLine[]; onClose: () => void }) {
-  return (
-    <div style={modalBackdrop}>
-      <div style={modalBody}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>{account.name} — Details</div>
-        <div style={{ maxHeight: 360, overflow: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th style={th}>Name</th><th style={th}>Kind</th><th style={th}>Recurrence</th><th style={{ ...th, textAlign: 'right' }}>Amount</th><th style={th}>Start</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.id}>
-                  <td style={td}>{l.name}</td>
-                  <td style={td}>{l.kind}</td>
-                  <td style={td}>{l.recurrence}{l.every_n ? ` / ${l.every_n}` : ''}</td>
-                  <td style={{ ...td, textAlign: 'right' }}>{formatCurrency(l.amount)}</td>
-                  <td style={td}>{l.start_date}</td>
-                </tr>
-              ))}
-              {lines.length === 0 && <tr><td style={{ ...td, color: '#777' }} colSpan={5}>No projections yet</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
-          <button style={btn} onClick={onClose}>Close</button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -719,10 +501,6 @@ function AccountDetailModal({
 /* ---------- styles ---------- */
 const inpt: React.CSSProperties = { border: '1px solid #e5e7eb', borderRadius: 6, padding: '6px 8px', background: '#fff' };
 const btn: React.CSSProperties = { border: '1px solid #111', background: '#111', color: '#fff', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' };
-const btnGhost: React.CSSProperties = { border: '1px solid #e5e7eb', background: '#fff', color: '#111', borderRadius: 8, padding: '6px 10px', cursor: 'pointer' };
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 12, marginBottom: 12 };
 const th: React.CSSProperties = { textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid #eee', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '8px 10px', borderBottom: '1px solid #f2f2f2', whiteSpace: 'nowrap' };
-const lab: React.CSSProperties = { display: 'flex', flexDirection: 'column', fontSize: 12, gap: 4 };
-const modalBackdrop: React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 };
-const modalBody: React.CSSProperties = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 12, minWidth: 620 };

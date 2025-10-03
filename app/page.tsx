@@ -73,38 +73,71 @@ type PerTotals = Record<PeriodKey, {
 type Alloc = { pct_profit:number; pct_owners:number; pct_tax:number; pct_operating:number; pct_vault?:number }
 type Bal = { operating:number; profit:number; owners:number; tax:number; vault:number }
 
-function runForecast(per: PerTotals, periods:PeriodKey[], alloc:Alloc, start:Bal){
-  const realRevenue: Record<PeriodKey, number> = {}
-  const snaps: Record<PeriodKey, {operating:any; profit:any; owners:any; tax:any; vault:any}> = {}
-  const bal = { ...start }
-  for(const p of periods){
-    const g = per[p] || {income:0, materials:0, direct_subs:0, direct_wages:0, expense:0, loan_debt:0}
-    const rr = Math.max(0, g.income - (g.materials + g.direct_subs + g.direct_wages))
-    realRevenue[p] = rr
+function runForecast(
+  per: PerTotals,
+  periods: PeriodKey[],
+  alloc: Alloc,
+  start: Bal
+) {
+  const realRevenue: Record<PeriodKey, number> = {};
+  const snaps: Record<
+    PeriodKey,
+    { operating: any; profit: any; owners: any; tax: any; vault: any }
+  > = {};
+
+  const bal = { ...start };
+  const accounts = ['operating', 'profit', 'owners', 'tax', 'vault'] as const;
+
+  for (const p of periods) {
+    const g = per[p] || {
+      income: 0,
+      materials: 0,
+      direct_subs: 0,
+      direct_wages: 0,
+      expense: 0,
+      loan_debt: 0,
+    };
+
+    const rr = Math.max(
+      0,
+      g.income - (g.materials + g.direct_subs + g.direct_wages)
+    );
+    realRevenue[p] = rr;
+
     const a = {
-      profit: rr * (alloc.pct_profit||0),
-      owners: rr * (alloc.pct_owners||0),
-      tax: rr * (alloc.pct_tax||0),
-      operating: rr * (alloc.pct_operating||0),
-      vault: rr * (alloc.pct_vault||0)
-    }
+      profit: rr * (alloc.pct_profit || 0),
+      owners: rr * (alloc.pct_owners || 0),
+      tax: rr * (alloc.pct_tax || 0),
+      operating: rr * (alloc.pct_operating || 0),
+      vault: rr * (alloc.pct_vault || 0),
+    };
+
     const out = {
-      operating: g.materials + g.direct_subs + g.direct_wages + g.expense + g.loan_debt,
-      profit: 0, owners: 0, tax: 0, vault: 0
+      operating:
+        g.materials + g.direct_subs + g.direct_wages + g.expense + g.loan_debt,
+      profit: 0,
+      owners: 0,
+      tax: 0,
+      vault: 0,
+    };
+
+    const s: any = {};
+
+    for (const acc of accounts) {
+      const begin = (bal as any)[acc];
+      const inflows = (a as any)[acc] ?? 0;
+      const outflows = (out as any)[acc] ?? 0;
+      const end = begin + inflows - outflows;
+      (bal as any)[acc] = end;
+      s[acc] = { begin, inflows, outflows, end };
     }
-    const s:any = {}
-    ;(['operating','profit','owners','tax','vault'] as const).forEach(acc=>{
-      const begin = (bal as any)[acc]
-      const inflows = (a as any)[acc]||0
-      const outflows = (out as any)[acc]||0
-      const end = begin + inflows - outflows
-      (bal as any)[acc] = end
-      s[acc] = { begin, inflows, outflows, end }
-    })
-    snaps[p] = s
+
+    snaps[p] = s;
   }
-  return { realRevenue, snaps }
+
+  return { realRevenue, snaps };
 }
+
 
 /* ---------- page ---------- */
 export default function Page(){

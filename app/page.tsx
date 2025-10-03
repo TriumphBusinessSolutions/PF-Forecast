@@ -12,18 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-
-// ✅ You already have this client in your repo
 import { supabase } from "../lib/supabase";
-
-/**
- * Profit First Cash Flow Projection – LIVE (Multi‑Client)
- * ------------------------------------------------------
- * Full page component. Paste this whole file into app/page.tsx.
- *
- * New: Client selector (dropdown) + Add Client button.
- * All data loads/saves for the chosen client.
- */
 
 // ------------------------------
 // Brand Tokens
@@ -38,96 +27,71 @@ const BRAND = {
 // Helpers
 // ------------------------------
 const fmtCurrency = (n: number) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+    n || 0
+  );
 
 const shortMonth = (ym: string) => {
   const dt = new Date(ym + "-01");
   return dt.toLocaleDateString("en-US", { month: "short", year: "2-digit" }).replace(" ", "-");
 };
 
+const toSlug = (name: string) =>
+  name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
 // ------------------------------
-// Types from our views
+// Types
 // ------------------------------
+type PFAccount = {
+  slug: string; // 'operating', 'owners_pay', 'truck', ...
+  name: string; // 'Operating', "Owner's Pay", 'Truck'
+  sort_order: number | null;
+  color?: string | null;
+  is_core?: boolean | null;
+};
 
-type PFAccountKey = "Operating" | "Profit" | "OwnersPay" | "Tax" | "Vault";
+type ClientRow = { id: string; name: string };
 
-interface ClientRow { id: string; name: string }
-
-// Ending balances view
-interface BalRow {
+type ActivityLong = {
   client_id: string;
   ym: string; // YYYY-MM
-  month_start: string; // date
-  operating_end: number;
-  profit_end: number;
-  owners_pay_end: number;
-  tax_end: number;
-  vault_end: number;
-}
+  pf_slug: string; // matches pf_accounts.slug
+  net_amount: number;
+};
 
-// Monthly activity view
-interface ActivityRow {
+type BalanceLong = {
   client_id: string;
   ym: string; // YYYY-MM
-  income: number;
-  materials: number;
-  direct_subs: number;
-  direct_wages: number;
-  operating: number;
-  profit: number;
-  owners_pay: number;
-  tax: number;
-  vault: number;
-}
+  pf_slug: string;
+  ending_balance: number;
+};
 
-// Real revenue view
-interface RealRevRow {
-  client_id: string;
-  ym: string;
-  real_revenue: number;
-}
-
-// COA basic (for drill-down labeling)
-interface CoaRow { id: string; group_key: string; name?: string }
-
-// Occurrence rows for drill-down
-interface OccRow {
+type OccRow = {
   client_id: string;
   month_start: string; // date
   coa_account_id: string;
   kind: string;
   name: string;
   amount: number;
-}
-
-// Settings – Profit
-interface ProfitSettings {
-  profit_next_distribution_date: string; // YYYY-MM-DD
-  profit_distribution_pct: number; // 0..1
-  profit_remainder_to_vault_pct: number; // 0..1
-  profit_distribution_anchor: "quarter_start" | "rolling_3mo";
-}
-
-// Settings – Tax
-interface TaxSettings {
-  tax_blended_rate: number;
-  tax_adjustment_pct: number;
-  tax_use_equal_installments: boolean;
-  tax_first_applicable_year: number;
-}
-
-// Allocation settings
-interface AllocationSettings {
-  Operating: number; Profit: number; OwnersPay: number; Tax: number; Vault: number;
-}
+};
 
 // ------------------------------
 // Tiny UI atoms
 // ------------------------------
-const Card: React.FC<React.PropsWithChildren<{ title?: string; className?: string }>> = ({ title, className, children }) => (
-  <div className={`rounded-2xl shadow-lg bg-white border border-slate-100 ${className || ""}`} style={{ background: "linear-gradient(180deg, #ffffff 0%, #f8faff 100%)" }}>
+const Card: React.FC<React.PropsWithChildren<{ title?: string; className?: string }>> = ({
+  title,
+  className,
+  children,
+}) => (
+  <div
+    className={`rounded-2xl shadow-lg bg-white border border-slate-100 ${className || ""}`}
+    style={{ background: "linear-gradient(180deg, #ffffff 0%, #f8faff 100%)" }}
+  >
     {title && (
-      <div className="px-5 py-3 rounded-t-2xl text-white font-semibold" style={{ backgroundColor: BRAND.blue }}>
+      <div
+        className="px-5 py-3 rounded-t-2xl text-white font-semibold"
+        style={{ backgroundColor: BRAND.blue }}
+      >
         {title}
       </div>
     )}
@@ -135,24 +99,41 @@ const Card: React.FC<React.PropsWithChildren<{ title?: string; className?: strin
   </div>
 );
 
-const Badge: React.FC<{ label: string; tone?: "blue" | "orange" | "slate" }> = ({ label, tone = "blue" }) => {
+const Badge: React.FC<{ label: string; tone?: "blue" | "orange" | "slate" }> = ({
+  label,
+  tone = "blue",
+}) => {
   const bg = tone === "orange" ? BRAND.orange : tone === "slate" ? "#e2e8f0" : BRAND.blue;
   const txt = tone === "slate" ? "#0f172a" : "#ffffff";
   return (
-    <span className="inline-block text-xs font-semibold px-2.5 py-1 rounded-full" style={{ backgroundColor: bg, color: txt }}>
+    <span
+      className="inline-block text-xs font-semibold px-2.5 py-1 rounded-full"
+      style={{ backgroundColor: bg, color: txt }}
+    >
       {label}
     </span>
   );
 };
 
-const Tabs: React.FC<{ tabs: { id: string; label: string }[]; value: string; onChange: (id: string) => void; }> = ({ tabs, value, onChange }) => (
+const Tabs: React.FC<{
+  tabs: { id: string; label: string }[];
+  value: string;
+  onChange: (id: string) => void;
+}> = ({ tabs, value, onChange }) => (
   <div className="flex gap-2 flex-wrap">
     {tabs.map((t) => (
       <button
         key={t.id}
         onClick={() => onChange(t.id)}
-        className={`px-4 py-2 rounded-full text-sm font-medium border transition shadow-sm ${value === t.id ? "bg-[var(--brand-blue)] text-white" : "bg-white text-slate-800 hover:bg-slate-50"}`}
-        style={{ borderColor: value === t.id ? BRAND.blue : "#e2e8f0", backgroundColor: value === t.id ? BRAND.blue : undefined }}
+        className={`px-4 py-2 rounded-full text-sm font-medium border transition shadow-sm ${
+          value === t.id
+            ? "bg-[var(--brand-blue)] text-white"
+            : "bg-white text-slate-800 hover:bg-slate-50"
+        }`}
+        style={{
+          borderColor: value === t.id ? BRAND.blue : "#e2e8f0",
+          backgroundColor: value === t.id ? BRAND.blue : undefined,
+        }}
       >
         {t.label}
       </button>
@@ -160,15 +141,24 @@ const Tabs: React.FC<{ tabs: { id: string; label: string }[]; value: string; onC
   </div>
 );
 
-const SlideOver: React.FC<{ open: boolean; title: string; onClose: () => void; children: React.ReactNode; }> = ({ open, title, onClose, children }) => {
+const SlideOver: React.FC<{
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}> = ({ open, title, onClose, children }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute right-0 top-0 h-full w-full sm:w-[520px] bg-white shadow-2xl p-6 overflow-y-auto">
+      <div className="absolute right-0 top-0 h-full w-full sm:w-[560px] bg-white shadow-2xl p-6 overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-semibold" style={{ color: BRAND.blue }}>{title}</h3>
-          <button className="text-slate-600 hover:text-slate-900" onClick={onClose}>✕</button>
+          <h3 className="text-xl font-semibold" style={{ color: BRAND.blue }}>
+            {title}
+          </h3>
+          <button className="text-slate-600 hover:text-slate-900" onClick={onClose}>
+            ✕
+          </button>
         </div>
         {children}
       </div>
@@ -177,7 +167,7 @@ const SlideOver: React.FC<{ open: boolean; title: string; onClose: () => void; c
 };
 
 // ------------------------------
-// Page Component – LIVE Multi‑Client
+// Page Component – Dynamic PF (core + custom)
 // ------------------------------
 export default function Page() {
   // Clients
@@ -188,35 +178,29 @@ export default function Page() {
   const [tab, setTab] = useState("dashboard");
   const [showSeries, setShowSeries] = useState<"total" | "accounts">("total");
 
-  // Drill-down
-  const [drillAccount, setDrillAccount] = useState<PFAccountKey | null>(null);
-  const [drillMonth, setDrillMonth] = useState<string | null>(null);
+  // Dynamic PF accounts
+  const [accounts, setAccounts] = useState<PFAccount[]>([]);
 
-  // LIVE state
+  // Data
   const [months, setMonths] = useState<string[]>([]);
-  const [activity, setActivity] = useState<ActivityRow[]>([]);
-  const [balances, setBalances] = useState<BalRow[]>([]);
-  const [realRev, setRealRev] = useState<RealRevRow[]>([]);
-  const [coa, setCoa] = useState<Record<string, CoaRow>>({});
-  const [occRows, setOccRows] = useState<OccRow[]>([]);
+  const [activityLong, setActivityLong] = useState<ActivityLong[]>([]);
+  const [balancesLong, setBalancesLong] = useState<BalanceLong[]>([]);
 
-  // Settings (defaults; real ones load from DB)
-  const [profitSettings, setProfitSettings] = useState<ProfitSettings>({
-    profit_next_distribution_date: "2025-10-31",
-    profit_distribution_pct: 0.5,
-    profit_remainder_to_vault_pct: 0.0,
-    profit_distribution_anchor: "rolling_3mo",
-  });
-  const [taxSettings, setTaxSettings] = useState<TaxSettings>({
-    tax_blended_rate: 0.3,
-    tax_adjustment_pct: 0.05,
-    tax_use_equal_installments: true,
-    tax_first_applicable_year: new Date().getFullYear(),
-  });
-  const [alloc, setAlloc] = useState<AllocationSettings>({ Operating: 0.45, Profit: 0.1, OwnersPay: 0.3, Tax: 0.1, Vault: 0.05 });
+  // Allocations (% per slug)
+  const [alloc, setAlloc] = useState<Record<string, number>>({}); // slug -> pct
+  const [allocDate, setAllocDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+
+  // Drill-down
+  const [drillSlug, setDrillSlug] = useState<string | null>(null);
+  const [drillMonth, setDrillMonth] = useState<string | null>(null);
+  const [occRows, setOccRows] = useState<OccRow[]>([]);
+  const [coaMap, setCoaMap] = useState<Record<string, string>>({}); // coa_account_id -> pf_slug
 
   // Allocation validation
-  const allocTotal = alloc.Operating + alloc.Profit + alloc.OwnersPay + alloc.Tax + alloc.Vault;
+  const allocTotal = useMemo(
+    () => accounts.reduce((s, a) => s + (alloc[a.slug] || 0), 0),
+    [accounts, alloc]
+  );
   const allocValid = Math.abs(allocTotal - 1) < 0.0001;
 
   // -------- Load clients once --------
@@ -232,129 +216,123 @@ export default function Page() {
     })();
   }, []);
 
-  // -------- Load COA (per client) --------
+  // -------- When client changes: load PF accounts, mapping, allocations, data --------
   useEffect(() => {
     if (!clientId) return;
     (async () => {
-      const { data } = await supabase.from("coa_accounts").select("id, group_key, name").eq("client_id", clientId);
-      const map: Record<string, CoaRow> = {};
-      (data ?? []).forEach((r: any) => (map[r.id] = { id: r.id, group_key: r.group_key, name: r.name }));
-      setCoa(map);
-    })();
-  }, [clientId]);
+      // PF accounts list (core + custom)
+      const { data: paf } = await supabase
+        .from("pf_accounts")
+        .select("slug, name, sort_order, color, is_core")
+        .eq("client_id", clientId)
+        .order("is_core", { ascending: false })
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true });
+      setAccounts((paf ?? []) as PFAccount[]);
 
-  // -------- Load dashboard data when client changes --------
-  useEffect(() => {
-    if (!clientId) return;
-    (async () => {
-      const { data: act, error: e1 } = await supabase
-        .from("v_monthly_activity").select("*")
-        .eq("client_id", clientId).order("ym");
-      if (e1) console.error("v_monthly_activity error", e1);
+      // COA → PF mapping
+      const { data: mapRows } = await supabase
+        .from("coa_to_pf_map")
+        .select("coa_account_id, pf_slug")
+        .eq("client_id", clientId);
+      const cmap: Record<string, string> = {};
+      (mapRows ?? []).forEach((r: any) => (cmap[r.coa_account_id] = r.pf_slug));
+      setCoaMap(cmap);
 
-      const { data: end, error: e2 } = await supabase
-        .from("v_pf_balances").select("*")
-        .eq("client_id", clientId).order("month_start");
-      if (e2) console.error("v_pf_balances error", e2);
+      // Latest allocations (grab the most recent effective_date)
+      const { data: latestDate } = await supabase
+        .from("allocation_targets")
+        .select("effective_date")
+        .eq("client_id", clientId)
+        .order("effective_date", { ascending: false })
+        .limit(1);
+      const activeDate = latestDate?.[0]?.effective_date ?? allocDate;
+      setAllocDate(activeDate);
 
-      const { data: rr, error: e3 } = await supabase
-        .from("v_real_revenue").select("*")
-        .eq("client_id", clientId).order("ym");
-      if (e3) console.error("v_real_revenue error", e3);
+      const { data: allocRows } = await supabase
+        .from("allocation_targets")
+        .select("pf_slug, pct")
+        .eq("client_id", clientId)
+        .eq("effective_date", activeDate);
+      const allocMap: Record<string, number> = {};
+      (allocRows ?? []).forEach((r: any) => (allocMap[r.pf_slug] = Number(r.pct || 0)));
+      setAlloc(allocMap);
 
-      const ymList = (act ?? []).map((r: any) => r.ym);
+      // Activity + Balances (long views)
+      const { data: act } = await supabase
+        .from("v_monthly_activity_long")
+        .select("*")
+        .eq("client_id", clientId)
+        .order("ym");
+      setActivityLong((act ?? []) as ActivityLong[]);
+
+      const { data: bal } = await supabase
+        .from("v_pf_balances_long")
+        .select("*")
+        .eq("client_id", clientId)
+        .order("ym");
+      setBalancesLong((bal ?? []) as BalanceLong[]);
+
+      // Month list
+      const ymList = Array.from(new Set((act ?? []).map((r: any) => r.ym)));
       setMonths(ymList);
-      setActivity((act ?? []) as ActivityRow[]);
-      setBalances((end ?? []) as BalRow[]);
-      setRealRev((rr ?? []) as RealRevRow[]);
-
-      // Settings
-      const { data: pd } = await supabase
-        .from("profit_distributions").select("*")
-        .eq("client_id", clientId).limit(1).single();
-      if (pd) setProfitSettings({
-        profit_next_distribution_date: pd.next_distribution_date ?? "2025-10-31",
-        profit_distribution_pct: Number(pd.distribution_pct ?? 0.5),
-        profit_remainder_to_vault_pct: Number(pd.remainder_to_vault_pct ?? 0.0),
-        profit_distribution_anchor: (pd.anchor ?? "rolling_3mo"),
-      });
-
-      const { data: ts } = await supabase
-        .from("tax_settings").select("*")
-        .eq("client_id", clientId).limit(1).single();
-      if (ts) setTaxSettings({
-        tax_blended_rate: Number(ts.blended_rate ?? 0.3),
-        tax_adjustment_pct: Number(ts.adjustment_pct ?? 0.05),
-        tax_use_equal_installments: !!ts.use_equal_installments,
-        tax_first_applicable_year: Number(ts.first_applicable_year ?? new Date().getFullYear()),
-      });
-
-      const { data: ap } = await supabase
-        .from("allocation_plans").select("*")
-        .eq("client_id", clientId).order("effective_date", { ascending: false }).limit(1);
-      if (ap && ap[0]) setAlloc({
-        Operating: Number(ap[0].operating_pct ?? 0.45),
-        Profit: Number(ap[0].profit_pct ?? 0.1),
-        OwnersPay: Number(ap[0].owners_pay_pct ?? 0.3),
-        Tax: Number(ap[0].tax_pct ?? 0.1),
-        Vault: Number(ap[0].vault_pct ?? 0.05),
-      });
     })();
   }, [clientId]);
 
-  // -------- Build chart/table inputs from live state --------
-  const pfAccounts: PFAccountKey[] = ["Operating", "Profit", "OwnersPay", "Tax", "Vault"];
+  // -------- Pivots for rendering --------
+  // map ym -> { slug -> net_amount }
+  const actByMonth = useMemo(() => {
+    const m = new Map<string, Record<string, number>>();
+    activityLong.forEach((r) => {
+      if (!m.has(r.ym)) m.set(r.ym, {});
+      m.get(r.ym)![r.pf_slug] = Number(r.net_amount || 0);
+    });
+    return m;
+  }, [activityLong]);
 
+  // map ym -> { slug -> ending_balance }
+  const balByMonth = useMemo(() => {
+    const m = new Map<string, Record<string, number>>();
+    balancesLong.forEach((r) => {
+      if (!m.has(r.ym)) m.set(r.ym, {});
+      m.get(r.ym)![r.pf_slug] = Number(r.ending_balance || 0);
+    });
+    return m;
+  }, [balancesLong]);
+
+  // Chart data (dynamic series)
   const chartData = useMemo(() => {
     return months.map((ym) => {
-      const b = balances.find((x) => x.ym === ym);
-      const Operating = b?.operating_end ?? 0;
-      const Profit = b?.profit_end ?? 0;
-      const OwnersPay = b?.owners_pay_end ?? 0;
-      const Tax = b?.tax_end ?? 0;
-      const Vault = b?.vault_end ?? 0;
-      return { month: ym, label: shortMonth(ym), Operating, Profit, OwnersPay, Tax, Vault, Total: Operating + Profit + OwnersPay + Tax + Vault };
+      const row = balByMonth.get(ym) || {};
+      const series: any = { month: ym, label: shortMonth(ym) };
+      let total = 0;
+      accounts.forEach((a) => {
+        const val = row[a.slug] || 0;
+        series[a.name] = val;
+        total += val;
+      });
+      series.Total = total;
+      return series;
     });
-  }, [months, balances]);
+  }, [months, balByMonth, accounts]);
 
-  const realRevenue = useMemo(() => months.map((ym) => ({ month: ym, RealRevenue: realRev.find((r) => r.ym === ym)?.real_revenue ?? 0 })), [months, realRev]);
-
-  const activityRows = useMemo(() => months.map((ym) => {
-    const r = activity.find((a) => a.ym === ym);
-    return {
-      month: ym,
-      Income: r?.income ?? 0,
-      Materials: r?.materials ?? 0,
-      DirectSubs: r?.direct_subs ?? 0,
-      DirectWages: r?.direct_wages ?? 0,
-      Operating: r?.operating ?? 0,
-      Profit: r?.profit ?? 0,
-      OwnersPay: r?.owners_pay ?? 0,
-      Tax: r?.tax ?? 0,
-      Vault: r?.vault ?? 0,
-    };
-  }), [months, activity]);
-
-  // -------- Drill-down: click a PF row and month to see inflows/outflows --------
-  async function openDrill(pfAccount: PFAccountKey, ym: string) {
+  // -------- Drill-down --------
+  async function openDrill(pfSlug: string, ym: string) {
     if (!clientId) return;
-    setDrillAccount(pfAccount);
+    setDrillSlug(pfSlug);
     setDrillMonth(ym);
-
     const monthStart = ym + "-01";
     const { data, error } = await supabase
       .from("v_proj_occurrences")
       .select("client_id, month_start, coa_account_id, kind, name, amount")
       .eq("client_id", clientId)
       .eq("month_start", monthStart);
-
     if (error) {
-      console.error("v_proj_occurrences error", error);
+      console.error(error);
       setOccRows([]);
       return;
     }
-
-    const filtered = (data ?? []).filter((row: any) => coa[row.coa_account_id]?.group_key === pfAccount);
+    const filtered = (data ?? []).filter((d: any) => coaMap[d.coa_account_id] === pfSlug);
     setOccRows(filtered as OccRow[]);
   }
 
@@ -364,70 +342,136 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-slate-50">
       <Head>
-        <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
-        <title>Cash Flow Projection – Profit First</title>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap"
+          rel="stylesheet"
+        />
+        <title>Cash Flow Projection – Profit First (Dynamic)</title>
       </Head>
 
       <style jsx global>{`
-        :root { --brand-blue: ${BRAND.blue}; --brand-orange: ${BRAND.orange}; }
-        html, body { font-family: 'Rubik', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; }
+        :root {
+          --brand-blue: ${BRAND.blue};
+          --brand-orange: ${BRAND.orange};
+        }
+        html,
+        body {
+          font-family: "Rubik", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+        }
       `}</style>
 
-      <div className="max-w-[1200px] mx-auto px-4 py-8">
-        <header className="mb-6">
+      {/* Dark header like your screenshot */}
+      <div
+        className="w-full"
+        style={{
+          background: `linear-gradient(180deg, ${BRAND.blueDark} 0%, ${BRAND.blue} 100%)`,
+        }}
+      >
+        <div className="max-w-[1200px] mx-auto px-4 py-5 text-white">
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight" style={{ color: BRAND.blue }}>
-              Profit First Cash Flow Projection
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+              Profit First Forecast
             </h1>
-            <Tabs tabs={[{ id: "dashboard", label: "Dashboard" }, { id: "settings", label: "Settings" }]} value={tab} onChange={setTab} />
+            <Tabs
+              tabs={[
+                { id: "dashboard", label: "Dashboard" },
+                { id: "settings", label: "Settings" },
+              ]}
+              value={tab}
+              onChange={setTab}
+            />
           </div>
-          <p className="text-slate-600 mt-2">Pick a client, then the numbers dance. Add a client to make a new sandbox.</p>
 
-          {/* Client Picker */}
           <div className="mt-4 flex items-center gap-3">
             <select
               value={clientId ?? ""}
               onChange={(e) => setClientId(e.target.value)}
-              className="border rounded-lg px-3 py-2 bg-white"
+              className="px-3 py-2 rounded-lg text-slate-900"
             >
               {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
             </select>
             <button
-              className="px-3 py-2 rounded-lg text-white"
-              style={{ backgroundColor: BRAND.blue }}
+              className="px-3 py-2 rounded-lg font-semibold"
+              style={{ backgroundColor: BRAND.orange, color: "white" }}
               onClick={async () => {
                 const name = prompt("New client name?");
                 if (!name) return;
-                const { data, error } = await supabase.from("clients").insert({ name }).select().single();
-                if (error) { alert("Could not add client."); return; }
+                const { data, error } = await supabase
+                  .from("clients")
+                  .insert({ name })
+                  .select()
+                  .single();
+                if (error) {
+                  alert("Could not add client (check RLS policies).");
+                  return;
+                }
                 setClients((prev) => [...prev, data as ClientRow]);
                 setClientId((data as any).id);
+
+                // also seed pf_accounts core rows for this new client (nice-to-have)
+                const core = [
+                  { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
+                  { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
+                  { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
+                  { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
+                  { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
+                ];
+                await supabase.from("pf_accounts").insert(
+                  core.map((r) => ({
+                    client_id: (data as any).id,
+                    ...r,
+                    is_core: true,
+                  }))
+                );
               }}
             >
               + Add Client
             </button>
           </div>
-        </header>
 
+          <p className="text-slate-200 mt-2 text-sm">
+            Pick a client. Add accounts like “Truck.” Everything updates automatically.
+          </p>
+        </div>
+      </div>
+
+      <div className="max-w-[1200px] mx-auto px-4 py-6">
         {/* DASHBOARD */}
         {tab === "dashboard" && (
           <div className="space-y-6">
-            {/* Top Chart */}
+            {/* Chart */}
             <Card title="Balances Over Time">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Badge label="Triumph" />
-                  <Badge label={showSeries === "total" ? "Total" : "Accounts"} tone="orange" />
+                  <Badge
+                    label={showSeries === "total" ? "Total" : "Accounts"}
+                    tone="orange"
+                  />
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="inline-flex items-center gap-2 text-sm">
-                    <input type="radio" name="series" value="total" checked={showSeries === "total"} onChange={() => setShowSeries("total")} />
+                    <input
+                      type="radio"
+                      name="series"
+                      value="total"
+                      checked={showSeries === "total"}
+                      onChange={() => setShowSeries("total")}
+                    />
                     Total Only
                   </label>
                   <label className="inline-flex items-center gap-2 text-sm">
-                    <input type="radio" name="series" value="accounts" checked={showSeries === "accounts"} onChange={() => setShowSeries("accounts")} />
+                    <input
+                      type="radio"
+                      name="series"
+                      value="accounts"
+                      checked={showSeries === "accounts"}
+                      onChange={() => setShowSeries("accounts")}
+                    />
                     Individual Accounts
                   </label>
                 </div>
@@ -441,30 +485,25 @@ export default function Page() {
                         <stop offset="5%" stopColor={BRAND.blue} stopOpacity={0.35} />
                         <stop offset="95%" stopColor={BRAND.blue} stopOpacity={0.05} />
                       </linearGradient>
-                      <linearGradient id="gOp" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#64748b" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="#64748b" stopOpacity={0.05} />
-                      </linearGradient>
-                      <linearGradient id="gProfit" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={BRAND.orange} stopOpacity={0.35} />
-                        <stop offset="95%" stopColor={BRAND.orange} stopOpacity={0.05} />
-                      </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="label" />
                     <YAxis tickFormatter={(v) => fmtCurrency(Number(v))} width={80} />
                     <Tooltip formatter={(v: any) => fmtCurrency(Number(v))} />
                     <Legend />
-
                     {showSeries === "total" ? (
                       <Area type="monotone" dataKey="Total" stroke={BRAND.blue} fill="url(#gTotal)" name="Total" />
                     ) : (
                       <>
-                        <Area type="monotone" dataKey="Operating" stroke="#64748b" fill="url(#gOp)" />
-                        <Area type="monotone" dataKey="Profit" stroke={BRAND.orange} fill="url(#gProfit)" />
-                        <Area type="monotone" dataKey="OwnersPay" stroke="#10b981" fillOpacity={0.1} />
-                        <Area type="monotone" dataKey="Tax" stroke="#ef4444" fillOpacity={0.1} />
-                        <Area type="monotone" dataKey="Vault" stroke="#8b5cf6" fillOpacity={0.1} />
+                        {accounts.map((a) => (
+                          <Area
+                            key={a.slug}
+                            type="monotone"
+                            dataKey={a.name}
+                            stroke={a.color || "#64748b"}
+                            fillOpacity={0.12}
+                          />
+                        ))}
                       </>
                     )}
                   </AreaChart>
@@ -477,27 +516,29 @@ export default function Page() {
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
-                    <tr style={{ backgroundColor: BRAND.blue }} className="text-white">
+                    <tr style={{ backgroundColor: BRAND.blue }} className="text-white sticky top-0">
                       <th className="px-3 py-2 text-left font-semibold">Account</th>
                       {months.map((m) => (
-                        <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">{shortMonth(m)}</th>
+                        <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                          {shortMonth(m)}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {pfAccounts.map((acc) => (
-                      <tr key={acc} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium text-slate-800">{acc}</td>
+                    {accounts.map((acc) => (
+                      <tr key={acc.slug} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
                         {months.map((m) => {
-                          const b = balances.find((x) => x.ym === m);
-                          const val = acc === "Operating" ? b?.operating_end
-                            : acc === "Profit" ? b?.profit_end
-                            : acc === "OwnersPay" ? b?.owners_pay_end
-                            : acc === "Tax" ? b?.tax_end
-                            : b?.vault_end;
+                          const row = balByMonth.get(m) || {};
+                          const val = row[acc.slug] || 0;
                           return (
-                            <td key={m} className="px-3 py-2 text-right text-slate-700 cursor-pointer" onClick={() => openDrill(acc, m)}>
-                              {fmtCurrency(val ?? 0)}
+                            <td
+                              key={m}
+                              className="px-3 py-2 text-right text-slate-700 cursor-pointer"
+                              onClick={() => openDrill(acc.slug, m)}
+                            >
+                              {fmtCurrency(val)}
                             </td>
                           );
                         })}
@@ -506,7 +547,9 @@ export default function Page() {
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-slate-500 mt-3">Ending balance = Prior ending + Net activity.</p>
+              <p className="text-xs text-slate-500 mt-3">
+                Ending balance = Prior ending + Net activity.
+              </p>
             </Card>
 
             {/* Monthly Activity Table */}
@@ -514,58 +557,40 @@ export default function Page() {
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
-                    <tr style={{ backgroundColor: BRAND.blue }} className="text-white">
-                      <th className="px-3 py-2 text-left font-semibold">Row</th>
+                    <tr style={{ backgroundColor: BRAND.blue }} className="text-white sticky top-0">
+                      <th className="px-3 py-2 text-left font-semibold">Account (net)</th>
                       {months.map((m) => (
-                        <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">{shortMonth(m)}</th>
+                        <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                          {shortMonth(m)}
+                        </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-slate-800">Income (gross)</td>
-                      {activityRows.map((r) => (
-                        <td key={r.month} className="px-3 py-2 text-right">{fmtCurrency(r.Income)}</td>
-                      ))}
-                    </tr>
-                    <tr className="hover:bg-slate-50">
-                      <td className="px-3 py-2 text-slate-700">Materials</td>
-                      {activityRows.map((r) => (
-                        <td key={r.month} className="px-3 py-2 text-right">{fmtCurrency(r.Materials)}</td>
-                      ))}
-                    </tr>
-                    <tr className="hover:bg-slate-50">
-                      <td className="px-3 py-2 text-slate-700">Direct Subcontractors</td>
-                      {activityRows.map((r) => (
-                        <td key={r.month} className="px-3 py-2 text-right">{fmtCurrency(r.DirectSubs)}</td>
-                      ))}
-                    </tr>
-                    <tr className="hover:bg-slate-50">
-                      <td className="px-3 py-2 text-slate-700">Direct Wages</td>
-                      {activityRows.map((r) => (
-                        <td key={r.month} className="px-3 py-2 text-right">{fmtCurrency(r.DirectWages)}</td>
-                      ))}
-                    </tr>
-                    <tr className="hover:bg-slate-50 font-medium">
-                      <td className="px-3 py-2 text-slate-800">Real Revenue</td>
-                      {realRevenue.map((r) => (
-                        <td key={r.month} className="px-3 py-2 text-right">{fmtCurrency(r.RealRevenue)}</td>
-                      ))}
-                    </tr>
-                    {pfAccounts.map((acc) => (
-                      <tr key={acc} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium text-slate-800">{acc} (net)</td>
-                        {activityRows.map((r) => (
-                          <td key={r.month} className="px-3 py-2 text-right cursor-pointer" onClick={() => openDrill(acc, r.month)}>
-                            {fmtCurrency((r as any)[acc])}
-                          </td>
-                        ))}
+                    {accounts.map((acc) => (
+                      <tr key={acc.slug} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
+                        {months.map((m) => {
+                          const row = actByMonth.get(m) || {};
+                          const val = row[acc.slug] || 0;
+                          return (
+                            <td
+                              key={m}
+                              className="px-3 py-2 text-right cursor-pointer"
+                              onClick={() => openDrill(acc.slug, m)}
+                            >
+                              {fmtCurrency(val)}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-slate-500 mt-3">For each month: Beginning + Net activity = Ending balance.</p>
+              <p className="text-xs text-slate-500 mt-3">
+                Each cell is that month’s net movement (not cumulative).
+              </p>
             </Card>
           </div>
         )}
@@ -573,142 +598,119 @@ export default function Page() {
         {/* SETTINGS */}
         {tab === "settings" && (
           <div className="space-y-6">
-            {/* Allocations */}
-            <Card title="Allocation Targets">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
-                {pfAccounts.map((acc) => (
-                  <div key={acc} className="space-y-1">
-                    <label className="text-sm font-medium text-slate-700">{acc}</label>
-                    <input type="number" step="0.01" min={0} max={1} value={(alloc as any)[acc]} onChange={(e) => setAlloc((prev) => ({ ...prev, [acc]: Number(e.target.value) }))} className="w-full border rounded-lg px-3 py-2" />
+            <Card title="Accounts & Allocations">
+              {/* Add Account */}
+              <div className="flex items-center gap-3 mb-4">
+                <button
+                  className="px-3 py-2 rounded-lg text-white"
+                  style={{ backgroundColor: BRAND.blue }}
+                  onClick={async () => {
+                    if (!clientId) return;
+                    const name = prompt("New PF Account name (e.g., Truck)?");
+                    if (!name) return;
+                    const slug = toSlug(name);
+                    const color = "#8b5cf6";
+                    const { error } = await supabase.from("pf_accounts").insert({
+                      client_id: clientId,
+                      slug,
+                      name,
+                      sort_order: 100,
+                      is_core: false,
+                      color,
+                    });
+                    if (error) {
+                      alert("Could not add account (check RLS or unique slug).");
+                      return;
+                    }
+                    // Reload accounts
+                    const { data: paf } = await supabase
+                      .from("pf_accounts")
+                      .select("slug, name, sort_order, color, is_core")
+                      .eq("client_id", clientId)
+                      .order("is_core", { ascending: false })
+                      .order("sort_order", { ascending: true })
+                      .order("name", { ascending: true });
+                    setAccounts((paf ?? []) as PFAccount[]);
+                    // Initialize allocation to 0
+                    setAlloc((prev) => ({ ...prev, [slug]: 0 }));
+                  }}
+                >
+                  + Add Account
+                </button>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <label className="text-sm text-slate-700">Effective Date</label>
+                  <input
+                    type="date"
+                    className="border rounded-lg px-3 py-2"
+                    value={allocDate}
+                    onChange={(e) => setAllocDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Allocations grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {accounts.map((acc) => (
+                  <div key={acc.slug} className="space-y-1">
+                    <label className="text-sm font-medium text-slate-700">{acc.name}</label>
+                    <input
+                      type="number"
+                      step={0.01}
+                      min={0}
+                      max={1}
+                      value={alloc[acc.slug] ?? 0}
+                      onChange={(e) =>
+                        setAlloc((prev) => ({ ...prev, [acc.slug]: Number(e.target.value) }))
+                      }
+                      className="w-full border rounded-lg px-3 py-2"
+                    />
                   </div>
                 ))}
               </div>
+
               <div className="mt-3 flex items-center justify-between">
-                <div><Badge label={`Total: ${(allocTotal * 100).toFixed(1)}%`} tone={allocValid ? "blue" : "orange"} /></div>
-                {!allocValid && <span className="text-sm font-medium text-orange-600">Allocations must total 100%.</span>}
-              </div>
-            </Card>
-
-            {/* Profit Distributions */}
-            <Card title="Profit Distributions">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Next Distribution Date</label>
-                  <input type="date" value={profitSettings.profit_next_distribution_date} onChange={(e) => setProfitSettings((s) => ({ ...s, profit_next_distribution_date: e.target.value }))} className="w-full border rounded-lg px-3 py-2" />
+                <div>
+                  <Badge
+                    label={`Total: ${(allocTotal * 100).toFixed(1)}%`}
+                    tone={allocValid ? "blue" : "orange"}
+                  />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Distribution % (to Owner)</label>
-                  <input type="number" min={0} max={1} step={0.01} value={profitSettings.profit_distribution_pct} onChange={(e) => setProfitSettings((s) => ({ ...s, profit_distribution_pct: Number(e.target.value) }))} className="w-full border rounded-lg px-3 py-2" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Remainder → Vault %</label>
-                  <input type="number" min={0} max={1} step={0.01} value={profitSettings.profit_remainder_to_vault_pct} onChange={(e) => setProfitSettings((s) => ({ ...s, profit_remainder_to_vault_pct: Number(e.target.value) }))} className="w-full border rounded-lg px-3 py-2" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Anchor (future)</label>
-                  <select value={profitSettings.profit_distribution_anchor} onChange={(e) => setProfitSettings((s) => ({ ...s, profit_distribution_anchor: e.target.value as any }))} className="w-full border rounded-lg px-3 py-2">
-                    <option value="rolling_3mo">Rolling 3 Months</option>
-                    <option value="quarter_start">Quarter Start</option>
-                  </select>
-                </div>
-              </div>
-              <p className="text-sm text-slate-600 mt-3">
-                On each distribution date: pay <strong>{(profitSettings.profit_distribution_pct * 100).toFixed(0)}%</strong> from Profit to Owner. From the remainder, move <strong>{(profitSettings.profit_remainder_to_vault_pct * 100).toFixed(0)}%</strong> into Vault.
-              </p>
-            </Card>
-
-            {/* Tax Settings */}
-            <Card title="Tax Estimates (Safe Harbor)">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Blended Rate</label>
-                  <input type="number" min={0} max={1} step={0.01} value={taxSettings.tax_blended_rate} onChange={(e) => setTaxSettings((s) => ({ ...s, tax_blended_rate: Number(e.target.value) }))} className="w-full border rounded-lg px-3 py-2" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Adjustment Buffer</label>
-                  <input type="number" min={0} max={1} step={0.01} value={taxSettings.tax_adjustment_pct} onChange={(e) => setTaxSettings((s) => ({ ...s, tax_adjustment_pct: Number(e.target.value) }))} className="w-full border rounded-lg px-3 py-2" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Equal Installments?</label>
-                  <select value={taxSettings.tax_use_equal_installments ? "yes" : "no"} onChange={(e) => setTaxSettings((s) => ({ ...s, tax_use_equal_installments: e.target.value === "yes" }))} className="w-full border rounded-lg px-3 py-2">
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">First Year</label>
-                  <input type="number" value={taxSettings.tax_first_applicable_year} onChange={(e) => setTaxSettings((s) => ({ ...s, tax_first_applicable_year: Number(e.target.value) }))} className="w-full border rounded-lg px-3 py-2" />
-                </div>
-              </div>
-
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr style={{ backgroundColor: BRAND.blue }} className="text-white">
-                      <th className="px-3 py-2 text-left font-semibold">Month</th>
-                      <th className="px-3 py-2 text-right font-semibold">Taxable YTD (rough)</th>
-                      <th className="px-3 py-2 text-right font-semibold">Projected Tax YTD</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {months.map((ym) => {
-                      const aIdx = months.findIndex((m) => m === ym);
-                      const ytdSlice = activity.slice(0, aIdx + 1);
-                      const taxableYTD = ytdSlice.reduce((s, x) => s + (x.income || 0), 0)
-                        - ytdSlice.reduce((s, x) => s + Math.abs(x.materials || 0) + Math.abs(x.direct_subs || 0) + Math.abs(x.direct_wages || 0) + Math.abs(Math.min(0, x.operating || 0)), 0);
-                      const taxableAdj = taxableYTD * (1 + (taxSettings.tax_adjustment_pct || 0));
-                      const projTaxYTD = taxableAdj * (taxSettings.tax_blended_rate || 0);
-                      return (
-                        <tr key={ym} className="odd:bg-white even:bg-slate-50">
-                          <td className="px-3 py-2">{shortMonth(ym)}</td>
-                          <td className="px-3 py-2 text-right">{fmtCurrency(taxableAdj)}</td>
-                          <td className="px-3 py-2 text-right">{fmtCurrency(projTaxYTD)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                {!allocValid && (
+                  <span className="text-sm font-medium text-orange-600">
+                    Allocations must total 100%.
+                  </span>
+                )}
               </div>
 
               <div className="flex gap-3 mt-4">
                 <button
-                  disabled={!clientId}
+                  disabled={!clientId || !allocValid}
                   onClick={async () => {
-                    if (!clientId) return;
-                    await supabase.from("profit_distributions").upsert({
-                      client_id: clientId,
-                      next_distribution_date: profitSettings.profit_next_distribution_date,
-                      distribution_pct: profitSettings.profit_distribution_pct,
-                      remainder_to_vault_pct: profitSettings.profit_remainder_to_vault_pct,
-                      anchor: profitSettings.profit_distribution_anchor,
-                    }, { onConflict: "client_id" });
-
-                    await supabase.from("tax_settings").upsert({
-                      client_id: clientId,
-                      blended_rate: taxSettings.tax_blended_rate,
-                      adjustment_pct: taxSettings.tax_adjustment_pct,
-                      use_equal_installments: taxSettings.tax_use_equal_installments,
-                      first_applicable_year: taxSettings.tax_first_applicable_year,
-                    }, { onConflict: "client_id" });
-
-                    await supabase.from("allocation_plans").insert({
-                      client_id: clientId,
-                      effective_date: new Date().toISOString().slice(0, 10),
-                      operating_pct: alloc.Operating,
-                      profit_pct: alloc.Profit,
-                      owners_pay_pct: alloc.OwnersPay,
-                      tax_pct: alloc.Tax,
-                      vault_pct: alloc.Vault,
-                    });
-
-                    alert("Settings saved.");
+                    if (!clientId || !allocValid) return;
+                    // Upsert one row per account slug
+                    await Promise.all(
+                      accounts.map((a) =>
+                        supabase.from("allocation_targets").upsert(
+                          {
+                            client_id: clientId,
+                            effective_date: allocDate,
+                            pf_slug: a.slug,
+                            pct: alloc[a.slug] || 0,
+                          },
+                          { onConflict: "client_id, effective_date, pf_slug" }
+                        )
+                      )
+                    );
+                    alert("Allocations saved.");
                   }}
-                  className={`px-4 py-2 rounded-lg font-semibold text-white shadow ${!clientId ? "opacity-60 cursor-not-allowed" : ""}`}
+                  className={`px-4 py-2 rounded-lg font-semibold text-white shadow ${
+                    !clientId || !allocValid ? "opacity-60 cursor-not-allowed" : ""
+                  }`}
                   style={{ backgroundColor: BRAND.blue }}
                 >
-                  Save Settings
+                  Save Allocations
                 </button>
-
                 <button
                   onClick={() => location.reload()}
                   className="px-4 py-2 rounded-lg font-semibold text-white shadow"
@@ -718,12 +720,33 @@ export default function Page() {
                 </button>
               </div>
             </Card>
+
+            <Card title="COA Mapping (where activity lands)">
+              <p className="text-sm text-slate-600 mb-3">
+                Map your Chart of Accounts lines to PF accounts so activity flows into the right
+                buckets. Add more COA → PF rows in the DB as needed.
+              </p>
+              <div className="text-sm text-slate-500">
+                (For now, this is informational—editing UI can be added later. Current mappings are
+                used in the drill-down and monthly activity.)
+              </div>
+            </Card>
           </div>
         )}
       </div>
 
       {/* Drill-Down SlideOver */}
-      <SlideOver open={!!drillAccount} title={`Drill-Down: ${drillAccount ?? ""} • ${drillMonth ? shortMonth(drillMonth) : ""}`} onClose={() => { setDrillAccount(null); setDrillMonth(null); setOccRows([]); }}>
+      <SlideOver
+        open={!!drillSlug}
+        title={`Drill-Down: ${accounts.find((a) => a.slug === drillSlug)?.name ?? ""} • ${
+          drillMonth ? shortMonth(drillMonth) : ""
+        }`}
+        onClose={() => {
+          setDrillSlug(null);
+          setDrillMonth(null);
+          setOccRows([]);
+        }}
+      >
         <div className="space-y-4">
           <Card title="Inflows">
             <table className="w-full text-sm">
@@ -734,14 +757,20 @@ export default function Page() {
                 </tr>
               </thead>
               <tbody>
-                {occRows.filter((r) => r.amount > 0).map((r, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="py-1">{r.name}</td>
-                    <td className="py-1 text-right">{fmtCurrency(r.amount)}</td>
-                  </tr>
-                ))}
+                {occRows
+                  .filter((r) => r.amount > 0)
+                  .map((r, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="py-1">{r.name}</td>
+                      <td className="py-1 text-right">{fmtCurrency(r.amount)}</td>
+                    </tr>
+                  ))}
                 {occRows.filter((r) => r.amount > 0).length === 0 && (
-                  <tr><td className="py-2 text-slate-500" colSpan={2}>No inflows</td></tr>
+                  <tr>
+                    <td className="py-2 text-slate-500" colSpan={2}>
+                      No inflows
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -755,14 +784,20 @@ export default function Page() {
                 </tr>
               </thead>
               <tbody>
-                {occRows.filter((r) => r.amount < 0).map((r, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="py-1">{r.name}</td>
-                    <td className="py-1 text-right">{fmtCurrency(r.amount)}</td>
-                  </tr>
-                ))}
+                {occRows
+                  .filter((r) => r.amount < 0)
+                  .map((r, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="py-1">{r.name}</td>
+                      <td className="py-1 text-right">{fmtCurrency(r.amount)}</td>
+                    </tr>
+                  ))}
                 {occRows.filter((r) => r.amount < 0).length === 0 && (
-                  <tr><td className="py-2 text-slate-500" colSpan={2}>No outflows</td></tr>
+                  <tr>
+                    <td className="py-2 text-slate-500" colSpan={2}>
+                      No outflows
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

@@ -13,9 +13,9 @@
     "react-dom": "18.3.1",
     "@supabase/supabase-js": "^2.45.0",
     "dayjs": "^1.11.13",
-    "recharts": "^2.12.6"
-  },
-  "devDependencies": {
+    "recharts": "^2.12.6",
+
+    // --- put TypeScript + types in dependencies so Vercel always installs them ---
     "typescript": "^5.5.4",
     "@types/node": "^20.14.9",
     "@types/react": "^18.3.3",

@@ -14,7 +14,7 @@ import {
 } from "recharts";
 
 // ✅ You already have this client in your repo
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../lib/supabase";
 
 /**
  * Profit First Cash Flow Projection – LIVE (Multi‑Client)

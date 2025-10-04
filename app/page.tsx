@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import Head from "next/head";
+import type { Session } from "@supabase/supabase-js";
 import {
   AreaChart,
   Area,
@@ -16,6 +16,30 @@ import { supabase } from "../lib/supabase";
 
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };
+
+const MEMBERSHIP_PLANS = [
+  {
+    id: "launch",
+    name: "Launch",
+    blurb: "Perfect for solo advisors establishing their first Profit First dashboards.",
+    headline: "Starter access",
+    accent: "rgba(0, 74, 173, 0.65)",
+  },
+  {
+    id: "growth",
+    name: "Growth",
+    blurb: "Great for growing firms that need to collaborate with a handful of clients.",
+    headline: "Team collaboration",
+    accent: "rgba(250, 145, 0, 0.7)",
+  },
+  {
+    id: "scale",
+    name: "Scale",
+    blurb: "Reserved for multi-advisor teams managing complex Profit First portfolios.",
+    headline: "Unlimited potential",
+    accent: "rgba(15, 23, 42, 0.7)",
+  },
+];
 
 const money = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
@@ -56,21 +80,695 @@ const Card: React.FC<React.PropsWithChildren<{ title?: string }>> = ({ title, ch
   </div>
 );
 
-const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({ className, ...p }) => (
+const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({
+  className = "",
+  disabled,
+  ...p
+}) => (
   <button
     {...p}
-    className={
-      "px-3 py-2 rounded-lg text-sm font-medium bg-white border border-slate-300 hover:bg-slate-50 " +
-      (className || "")
-    }
+    disabled={disabled}
+    className={`px-3 py-2 rounded-lg text-sm font-medium border border-slate-300 transition-colors ${
+      disabled ? "opacity-60 cursor-not-allowed bg-slate-100" : "bg-white hover:bg-slate-50"
+    } ${className}`}
   />
 );
 
+const AuthView: React.FC = () => {
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [signupStep, setSignupStep] = useState<"plans" | "form">("form");
+  const [selectedPlan, setSelectedPlan] = useState<string>(MEMBERSHIP_PLANS[0]?.id ?? "launch");
+
+  const selectedPlanMeta = useMemo(
+    () => MEMBERSHIP_PLANS.find((plan) => plan.id === selectedPlan) ?? MEMBERSHIP_PLANS[0],
+    [selectedPlan],
+  );
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setLoading(true);
+    try {
+      if (mode === "sign-in") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { membership_plan: selectedPlan } },
+        });
+        if (error) throw error;
+        setMessage({
+          type: "success",
+          text: "Check your email to confirm your account before signing in.",
+        });
+      }
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      setMessage({ type: "error", text });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const switchMode = (nextMode: "sign-in" | "sign-up") => {
+    setMode(nextMode);
+    setMessage(null);
+    if (nextMode === "sign-up") {
+      setSignupStep("plans");
+      setSelectedPlan(MEMBERSHIP_PLANS[0]?.id ?? "launch");
+      setEmail("");
+      setPassword("");
+    } else {
+      setSignupStep("form");
+      setEmail("");
+      setPassword("");
+    }
+  };
+
+  const showPlanStep = mode === "sign-up" && signupStep === "plans";
+
+  return (
+    <div className="auth-root">
+      <div className="auth-artwork" aria-hidden="true">
+        <div className="auth-radial auth-radial--top" />
+        <div className="auth-radial auth-radial--bottom" />
+        <div className="auth-grid" />
+        <svg viewBox="0 0 600 400" className="auth-chart">
+          <path
+            d="M0 320L60 260L120 280L180 210L240 240L300 150L360 210L420 120L480 190L540 110L600 160"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          {[60, 120, 180, 240, 300, 360, 420, 480, 540].map((x, i) => (
+            <g key={x}>
+              <rect
+                x={x - 6}
+                y={i % 2 === 0 ? 200 : 140}
+                width={12}
+                height={i % 2 === 0 ? 90 : 120}
+                rx={3}
+                fill="currentColor"
+                opacity={0.4}
+              />
+              <circle cx={x} cy={i % 2 === 0 ? 260 : 150} r={7} fill="currentColor" />
+            </g>
+          ))}
+        </svg>
+        <div className="auth-glow auth-glow--emerald" />
+        <div className="auth-glow auth-glow--base" />
+      </div>
+
+      <div className="auth-card-wrapper">
+        <div className="auth-card">
+          <div className="auth-copy">
+            <h1 className="auth-brand-title">Triumph Cash Forecast</h1>
+            <p className="auth-brand-subtitle">Specially made to Follow Profit First Methods</p>
+            <h2 className="auth-title">
+              {mode === "sign-in"
+                ? "Welcome back"
+                : showPlanStep
+                ? "Choose your membership"
+                : "Create your account"}
+            </h2>
+            <p className="auth-subtitle">
+              {mode === "sign-in"
+                ? "Sign in to review client performance and update allocations."
+                : showPlanStep
+                ? "Select the membership level that fits your firm—each option can be customized later."
+                : "Set up your workspace so you can start onboarding clients."}
+            </p>
+          </div>
+
+          {showPlanStep ? (
+            <div className="auth-plan-picker" role="radiogroup" aria-label="Membership level">
+              <div className="auth-plan-grid">
+                {MEMBERSHIP_PLANS.map((plan) => {
+                  const active = selectedPlan === plan.id;
+                  return (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      className={`auth-plan ${active ? "auth-plan--active" : ""}`}
+                      onClick={() => setSelectedPlan(plan.id)}
+                    >
+                      <span className="auth-plan-headline">{plan.headline}</span>
+                      <span className="auth-plan-name">{plan.name}</span>
+                      <span className="auth-plan-blurb">{plan.blurb}</span>
+                      <span className="auth-plan-pill">Customize soon</span>
+                      <span className="auth-plan-highlight" style={{ background: plan.accent }} />
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="auth-submit" onClick={() => setSignupStep("form")}>
+                Continue with {selectedPlanMeta?.name ?? "plan"}
+              </button>
+              <p className="auth-plan-note">
+                You can fine-tune pricing, client limits, and perks for each membership inside Supabase later.
+              </p>
+              <p className="auth-switch">
+                Already have an account?{" "}
+                <button type="button" onClick={() => switchMode("sign-in")}>Sign in</button>
+              </p>
+            </div>
+          ) : (
+            <form className="auth-form" onSubmit={handleSubmit}>
+              {mode === "sign-up" && selectedPlanMeta && (
+                <div className="auth-plan-summary">
+                  <div>
+                    <span className="auth-plan-summary-label">Membership</span>
+                    <span className="auth-plan-summary-name">{selectedPlanMeta.name}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="auth-plan-summary-change"
+                    onClick={() => setSignupStep("plans")}
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
+              <label className="auth-field" htmlFor="authEmail">
+                <span className="auth-label">Email</span>
+                <input
+                  id="authEmail"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="auth-input"
+                />
+              </label>
+              <label className="auth-field" htmlFor="authPassword">
+                <span className="auth-label">Password</span>
+                <input
+                  id="authPassword"
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="auth-input"
+                />
+              </label>
+              {message && (
+                <p
+                  className={`auth-message ${
+                    message.type === "error" ? "auth-message--error" : "auth-message--success"
+                  }`}
+                >
+                  {message.text}
+                </p>
+              )}
+              <button type="submit" className="auth-submit" disabled={loading}>
+                {loading ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
+              </button>
+              <p className="auth-switch">
+                {mode === "sign-in" ? (
+                  <>
+                    Don&apos;t have an account?{" "}
+                    <button type="button" onClick={() => switchMode("sign-up")}>Sign up</button>
+                  </>
+                ) : (
+                  <>
+                    Already have an account?{" "}
+                    <button type="button" onClick={() => switchMode("sign-in")}>Sign in</button>
+                  </>
+                )}
+              </p>
+            </form>
+          )}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .auth-root {
+          position: relative;
+          display: flex;
+          min-height: 100vh;
+          width: 100%;
+          align-items: center;
+          justify-content: center;
+          padding: 64px 16px;
+          background: #020617;
+          overflow: hidden;
+        }
+        @media (min-width: 640px) {
+          .auth-root {
+            padding: 80px 24px;
+          }
+        }
+        .auth-artwork {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+        }
+        .auth-radial {
+          position: absolute;
+          inset: 0;
+        }
+        .auth-radial--top {
+          background: radial-gradient(circle at top, rgba(37, 99, 235, 0.35), transparent 60%);
+        }
+        .auth-radial--bottom {
+          background: radial-gradient(circle at bottom, rgba(16, 185, 129, 0.25), transparent 55%);
+        }
+        .auth-grid {
+          position: absolute;
+          inset: 0;
+          background-image: linear-gradient(120deg, rgba(148, 163, 184, 0.18) 1px, transparent 0);
+          background-size: 40px 40px;
+          opacity: 0.18;
+        }
+        .auth-chart {
+          position: absolute;
+          right: -96px;
+          top: 64px;
+          width: 520px;
+          color: rgba(56, 189, 248, 0.35);
+        }
+        .auth-glow {
+          position: absolute;
+          border-radius: 9999px;
+          filter: blur(96px);
+        }
+        .auth-glow--emerald {
+          left: -80px;
+          top: 48px;
+          width: 256px;
+          height: 256px;
+          background: rgba(16, 185, 129, 0.3);
+        }
+        .auth-glow--base {
+          left: 50%;
+          bottom: 0;
+          width: 140%;
+          height: 192px;
+          transform: translateX(-50%);
+          background: linear-gradient(to top, rgba(2, 6, 23, 0.95), rgba(2, 6, 23, 0.4), transparent);
+        }
+        .auth-card-wrapper {
+          position: relative;
+          z-index: 10;
+          width: 100%;
+          max-width: 520px;
+          padding: 0 12px;
+        }
+        .auth-card {
+          border-radius: 28px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          background: rgba(255, 255, 255, 0.92);
+          padding: 48px 40px;
+          color: #0f172a;
+          box-shadow: 0 40px 90px -30px rgba(15, 23, 42, 0.85);
+          backdrop-filter: blur(22px);
+        }
+        @media (max-width: 520px) {
+          .auth-card {
+            padding: 40px 28px;
+          }
+        }
+        .auth-copy {
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .auth-brand-title {
+          font-size: 34px;
+          line-height: 1.15;
+          margin: 0;
+          font-weight: 700;
+          color: ${BRAND.blue};
+          text-shadow: 0 12px 30px rgba(2, 6, 23, 0.18);
+        }
+        .auth-brand-subtitle {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 500;
+          color: ${BRAND.orange};
+          letter-spacing: 0.02em;
+        }
+        .auth-title {
+          font-size: 20px;
+          margin: 12px 0 0;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .auth-subtitle {
+          margin-top: 4px;
+          font-size: 14px;
+          color: #475569;
+        }
+        .auth-form {
+          margin-top: 32px;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+        .auth-plan-picker {
+          margin-top: 32px;
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+        }
+        .auth-plan-grid {
+          display: grid;
+          gap: 16px;
+        }
+        @media (min-width: 768px) {
+          .auth-plan-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+        .auth-plan {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          align-items: flex-start;
+          border-radius: 18px;
+          padding: 20px;
+          text-align: left;
+          background: rgba(255, 255, 255, 0.92);
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+          color: #0f172a;
+          cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+          overflow: hidden;
+        }
+        .auth-plan:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 18px 30px -18px rgba(15, 23, 42, 0.45);
+        }
+        .auth-plan:focus-visible {
+          outline: 3px solid rgba(0, 74, 173, 0.35);
+          outline-offset: 2px;
+        }
+        .auth-plan--active {
+          border-color: rgba(0, 74, 173, 0.6);
+          box-shadow: 0 20px 34px -18px rgba(2, 6, 23, 0.6);
+        }
+        .auth-plan-headline {
+          font-size: 12px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          font-weight: 600;
+          color: #475569;
+        }
+        .auth-plan-name {
+          font-size: 20px;
+          font-weight: 700;
+          color: ${BRAND.blue};
+        }
+        .auth-plan-blurb {
+          font-size: 13px;
+          color: #475569;
+          line-height: 1.4;
+        }
+        .auth-plan-pill {
+          margin-top: auto;
+          display: inline-flex;
+          align-items: center;
+          padding: 6px 12px;
+          border-radius: 9999px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #fff;
+          background: linear-gradient(135deg, ${BRAND.blue}, ${BRAND.orange});
+        }
+        .auth-plan-highlight {
+          position: absolute;
+          inset: auto 0 0 0;
+          height: 12px;
+          opacity: 0.75;
+        }
+        .auth-plan-note {
+          font-size: 13px;
+          color: #475569;
+          text-align: center;
+        }
+        .auth-plan-summary {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          border-radius: 14px;
+          background: rgba(0, 74, 173, 0.08);
+          border: 1px solid rgba(0, 74, 173, 0.2);
+          color: #0f172a;
+        }
+        .auth-plan-summary-label {
+          display: block;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #1e293b;
+        }
+        .auth-plan-summary-name {
+          font-size: 16px;
+          font-weight: 600;
+          color: ${BRAND.blue};
+        }
+        .auth-plan-summary-change {
+          border: none;
+          background: transparent;
+          font-size: 13px;
+          font-weight: 600;
+          color: ${BRAND.orange};
+          cursor: pointer;
+          text-decoration: underline;
+        }
+        .auth-plan-summary-change:hover {
+          color: #cc7400;
+        }
+        .auth-plan-summary-change:focus-visible {
+          outline: 2px solid ${BRAND.orange};
+          outline-offset: 2px;
+        }
+        .auth-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 14px;
+        }
+        .auth-label {
+          font-weight: 500;
+          color: #1e293b;
+        }
+        .auth-input {
+          border-radius: 14px;
+          border: 1px solid #cbd5f5;
+          padding: 12px 16px;
+          font-size: 14px;
+          color: #0f172a;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .auth-input:focus {
+          outline: none;
+          border-color: ${BRAND.blue};
+          box-shadow: 0 0 0 3px rgba(0, 74, 173, 0.22);
+        }
+        .auth-message {
+          font-size: 14px;
+        }
+        .auth-message--error {
+          color: #dc2626;
+        }
+        .auth-message--success {
+          color: #059669;
+        }
+        .auth-submit {
+          margin-top: 4px;
+          width: 100%;
+          border: none;
+          border-radius: 16px;
+          padding: 14px 16px;
+          font-size: 16px;
+          font-weight: 600;
+          background: linear-gradient(135deg, ${BRAND.blue}, ${BRAND.orange});
+          color: #fff;
+          cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          box-shadow: 0 18px 32px -18px rgba(2, 6, 23, 0.75);
+        }
+        .auth-submit:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        .auth-submit:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow: 0 20px 40px -18px rgba(2, 6, 23, 0.82);
+        }
+        .auth-switch {
+          text-align: center;
+          font-size: 14px;
+          color: #64748b;
+        }
+        .auth-switch button {
+          background: none;
+          border: none;
+          color: ${BRAND.blue};
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .auth-switch button:hover {
+          text-decoration: underline;
+        }
+      `}</style>
+    </div>
+  );
+};
+
+type ClientSelectorProps = {
+  clients: ClientRow[];
+  loading: boolean;
+  error: string | null;
+  onSelect: (clientId: string) => void;
+  onCreate: (name: string) => Promise<ClientRow>;
+  onSignOut: () => Promise<void> | void;
+  userEmail?: string | null;
+};
+
+const ClientSelector: React.FC<ClientSelectorProps> = ({
+  clients,
+  loading,
+  error,
+  onSelect,
+  onCreate,
+  onSignOut,
+  userEmail,
+}) => {
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setLocalError("Please enter a client name.");
+      return;
+    }
+    setCreating(true);
+    setLocalError(null);
+    try {
+      const created = await onCreate(trimmed);
+      setNewName("");
+      onSelect(created.id);
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "Unable to create client.";
+      setLocalError(text);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4 py-12">
+      <div className="w-full max-w-2xl space-y-6">
+        <Card title="Select a client workspace">
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Choose an existing client or add a new one to start forecasting.
+            </p>
+            {loading ? (
+              <p className="text-sm text-slate-500">Loading clients...</p>
+            ) : clients.length ? (
+              <ul className="space-y-2">
+                {clients.map((client) => (
+                  <li key={client.id}>
+                    <Button
+                      type="button"
+                      onClick={() => onSelect(client.id)}
+                      className="flex w-full items-center justify-between text-left"
+                    >
+                      <span className="font-medium text-slate-800">{client.name}</span>
+                      <span className="text-xs text-slate-500">Open</span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">
+                You don&apos;t have any clients yet. Add one below to get started.
+              </p>
+            )}
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
+        </Card>
+        <Card title="Add a new client">
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="space-y-1">
+              <label htmlFor="newClientName" className="text-sm font-medium text-slate-700">
+                Client name
+              </label>
+              <input
+                id="newClientName"
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                placeholder="e.g. Acme Agency"
+              />
+            </div>
+            {localError && <p className="text-sm text-red-600">{localError}</p>}
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <Button
+                type="submit"
+                disabled={creating}
+                className="!bg-[#004aad] !text-white !border-[#004aad] hover:!bg-[#003b8a]"
+              >
+                {creating ? "Creating..." : "Add client"}
+              </Button>
+              <p className="text-xs text-slate-500">
+                Subscription-based client limits are coming soon. All plans are unlimited during preview.
+              </p>
+            </div>
+          </form>
+        </Card>
+        <div className="text-center text-sm text-slate-500">
+          <p>
+            Signed in as{" "}
+            <span className="font-medium text-slate-700">{userEmail ?? "unknown user"}</span>.
+          </p>
+          <div className="mt-3">
+            <Button type="button" onClick={onSignOut}>
+              Sign out
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ------------------ page ------------------
 export default function Page() {
+  // auth
+  const [session, setSession] = useState<Session | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
+
   // clients
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientId, setClientId] = useState<string | null>(null);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsError, setClientsError] = useState<string | null>(null);
 
   // controls
   const [mode, setMode] = useState<"total" | "accounts">("total");
@@ -95,18 +793,111 @@ export default function Page() {
   const [occ, setOcc] = useState<OccRow[]>([]);
   const [coaMap, setCoaMap] = useState<Record<string, string>>({}); // coa_id -> pf_slug
 
-  // ------------ bootstrap clients ------------
+  // ------------ auth & client bootstrap ------------
   useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from("clients").select("id, name").order("created_at");
-      setClients(data ?? []);
-      if (!clientId && data && data.length) setClientId(data[0].id);
-    })();
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setSession(data.session);
+      setCheckingSession(false);
+    });
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
+      setSession(nextSession);
+      setCheckingSession(false);
+    });
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setClientId(null);
+      setClients([]);
+      setClientsError(null);
+      setClientsLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    let active = true;
+    setClientsLoading(true);
+    setClientsError(null);
+    setClientId(null);
+    const loadClients = async () => {
+      try {
+        const { data, error } = await supabase.from("clients").select("id, name").order("created_at");
+        if (!active) return;
+        if (error) {
+          setClients([]);
+          setClientsError("Unable to load clients. Please check your access permissions.");
+        } else {
+          setClients(data ?? []);
+        }
+      } catch (_err) {
+        if (!active) return;
+        setClients([]);
+        setClientsError("Unable to load clients. Please check your access permissions.");
+      } finally {
+        if (active) setClientsLoading(false);
+      }
+    };
+    loadClients();
+    return () => {
+      active = false;
+    };
+  }, [session?.user?.id]);
+
+  async function handleCreateClient(name: string): Promise<ClientRow> {
+    if (!session) {
+      throw new Error("You must be signed in to create clients.");
+    }
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new Error("Client name is required.");
+    }
+    const ownerId = session.user?.id;
+    if (!ownerId) {
+      throw new Error("Unable to determine the current user. Please sign in again.");
+    }
+    const { data, error } = await supabase
+      .from("clients")
+      .insert({ name: trimmed, owner_id: ownerId })
+      .select()
+      .single();
+    if (error || !data) {
+      throw new Error(error?.message ?? "Could not add client. Check your access policies.");
+    }
+    const clientRow = data as ClientRow;
+    setClients((prev) => {
+      const withoutNew = prev.filter((c) => c.id !== clientRow.id);
+      return [...withoutNew, clientRow];
+    });
+    const coreAccounts = [
+      { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
+      { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
+      { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
+      { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
+      { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
+    ];
+    try {
+      await supabase
+        .from("pf_accounts")
+        .insert(coreAccounts.map((acc) => ({ client_id: clientRow.id, ...acc })));
+    } catch (seedError) {
+      console.error("Failed to seed default PF accounts", seedError);
+    }
+    return clientRow;
+  }
 
   // ------------ load data for a client ------------
   useEffect(() => {
-    if (!clientId) return;
+    if (!clientId || !session) return;
     (async () => {
       // accounts
       const { data: paf } = await supabase
@@ -219,66 +1010,89 @@ export default function Page() {
   const allocTotal = accounts.reduce((s, a) => s + (alloc[a.slug] || 0), 0);
   const allocOk = Math.abs(allocTotal - 1) < 0.0001;
 
-  return (
-    <main className="min-h-screen bg-slate-100">
-      <Head>
-        <title>Profit First Forecast</title>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap"
-          rel="stylesheet"
-        />
-      </Head>
-      <style jsx global>{`
-        html, body { font-family: Rubik, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-      `}</style>
+  const metadataEmail = session?.user?.user_metadata?.email;
+  const userEmail = session?.user?.email ?? (typeof metadataEmail === "string" ? metadataEmail : null);
 
-      <div className="max-w-[1200px] mx-auto px-4 py-4">
-        {/* top bar */}
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-          <div className="flex items-center gap-3">
-            <select
-              value={clientId ?? ""}
-              onChange={(e) => setClientId(e.target.value)}
-              className="px-3 py-2 rounded-lg border bg-white"
-            >
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <Button
-              onClick={async () => {
-                const name = prompt("New client name?");
-                if (!name) return;
-                const { data, error } = await supabase.from("clients").insert({ name }).select().single();
-                if (error) return alert("Could not add client. Check policies.");
-                setClients((p) => [...p, data as ClientRow]);
-                setClientId((data as any).id);
-                // seed core PF accounts for this client so UI works instantly
-                const core = [
-                  { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
-                  { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
-                  { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
-                  { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
-                  { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
-                ];
-                await supabase.from("pf_accounts").insert(
-                  core.map((r) => ({ client_id: (data as any).id, ...r }))
-                );
-              }}
-            >
-              + Add Client
-            </Button>
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+  }
+
+  return (
+    <>
+      <style jsx global>{`
+        html,
+        body {
+          font-family: 'Rubik', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+          background: #f1f5f9;
+          color: #0f172a;
+        }
+      `}</style>
+      <main style={{ minHeight: "100vh", background: "#f1f5f9" }}>
+        {checkingSession ? (
+          <div className="flex min-h-screen items-center justify-center px-4 py-12">
+            <p className="text-sm text-slate-500">Checking your session…</p>
+          </div>
+        ) : !session ? (
+          <AuthView />
+        ) : !clientId ? (
+          <ClientSelector
+            clients={clients}
+            loading={clientsLoading}
+            error={clientsError}
+            onSelect={(id) => setClientId(id)}
+            onCreate={handleCreateClient}
+            onSignOut={handleSignOut}
+            userEmail={userEmail}
+          />
+        ) : (
+          <div className="max-w-[1200px] mx-auto px-4 py-4">
+          {/* top bar */}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <select
+                value={clientId ?? ""}
+                onChange={(e) => setClientId(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+              >
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                onClick={async () => {
+                  const name = prompt("New client name?");
+                  if (!name) return;
+                  try {
+                    const created = await handleCreateClient(name);
+                    setClientId(created.id);
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Could not add client. Check policies.");
+                  }
+                }}
+              >
+                + Add Client
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-3 text-sm text-slate-600">
+              {userEmail && (
+                <span className="hidden sm:inline">
+                  Signed in as <span className="font-medium text-slate-800">{userEmail}</span>
+                </span>
+              )}
+              <Button onClick={handleSignOut}>Sign out</Button>
+            </div>
           </div>
 
-        {/* controls like your first screenshot */}
-          <div className="flex items-center gap-2">
+          {/* controls */}
+          <div className="flex flex-wrap items-center gap-2">
             <label className="text-sm text-slate-700">Horizon</label>
             <select
               value={horizon}
               onChange={(e) => setHorizon(Number(e.target.value))}
-              className="px-2 py-1 rounded-md border bg-white"
+              className="rounded-md border border-slate-300 bg-white px-2 py-1"
             >
               {[6, 9, 12, 18, 24].map((n) => (
                 <option key={n} value={n}>
@@ -286,267 +1100,268 @@ export default function Page() {
                 </option>
               ))}
             </select>
-            <label className="text-sm text-slate-700 ml-2">Start</label>
+            <label className="ml-2 text-sm text-slate-700">Start</label>
             <input
               type="month"
               value={startMonth}
               onChange={(e) => setStartMonth(e.target.value)}
-              className="px-2 py-1 rounded-md border bg-white"
+              className="rounded-md border border-slate-300 bg-white px-2 py-1"
             />
-            <label className="text-sm text-slate-700 ml-3">Mode</label>
+            <label className="ml-3 text-sm text-slate-700">Mode</label>
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value as any)}
-              className="px-2 py-1 rounded-md border bg-white"
+              className="rounded-md border border-slate-300 bg-white px-2 py-1"
             >
               <option value="total">Total balance</option>
               <option value="accounts">Individual accounts</option>
             </select>
           </div>
-        </div>
 
-        {/* chart */}
-        <Card title="Projected Ending Balances">
-          <div className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 12, right: 24, bottom: 12, left: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
-                <YAxis tickFormatter={(v) => money(Number(v))} width={90} />
-                <Tooltip formatter={(v: any) => money(Number(v))} />
-                <Legend />
-                {mode === "total" ? (
-                  <Area type="monotone" dataKey="Total" stroke={BRAND.blue} fillOpacity={0.15} />
-                ) : (
-                  accounts.map((a) => (
-                    <Area
-                      key={a.slug}
-                      type="monotone"
-                      dataKey={a.name}
-                      stroke={a.color || "#64748b"}
-                      fillOpacity={0.1}
+          {/* chart */}
+          <Card title="Projected Ending Balances">
+            <div className="h-[320px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 12, right: 24, bottom: 12, left: 24 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" />
+                  <YAxis tickFormatter={(v) => money(Number(v))} width={90} />
+                  <Tooltip formatter={(v: any) => money(Number(v))} />
+                  <Legend />
+                  {mode === "total" ? (
+                    <Area type="monotone" dataKey="Total" stroke={BRAND.blue} fillOpacity={0.15} />
+                  ) : (
+                    accounts.map((a) => (
+                      <Area
+                        key={a.slug}
+                        type="monotone"
+                        dataKey={a.name}
+                        stroke={a.color || "#64748b"}
+                        fillOpacity={0.1}
+                      />
+                    ))
+                  )}
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          {/* ending balances table */}
+          <div className="mt-4">
+            <Card title="Ending Bank Balances (roll-forward)">
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="px-3 py-2 text-left font-semibold">Row</th>
+                      {months.map((m) => (
+                        <th key={m} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+                          {shortYM(m)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts.map((acc) => (
+                      <tr key={acc.slug} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium text-slate-800">{acc.name} (End)</td>
+                        {months.map((m) => {
+                          const row = balByMonth.get(m) || {};
+                          const val = row[acc.slug] || 0;
+                          return (
+                            <td
+                              key={m}
+                              className="cursor-pointer px-3 py-2 text-right"
+                              onClick={() => openDrill(acc.slug, m)}
+                            >
+                              {money(val)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+
+          {/* monthly activity table */}
+          <div className="mt-4">
+            <Card title="Monthly Activity (net movement)">
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="px-3 py-2 text-left font-semibold">Account (net)</th>
+                      {months.map((m) => (
+                        <th key={m} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+                          {shortYM(m)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts.map((acc) => (
+                      <tr key={acc.slug} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
+                        {months.map((m) => {
+                          const row = actByMonth.get(m) || {};
+                          const val = row[acc.slug] || 0;
+                          return (
+                            <td
+                              key={m}
+                              className="cursor-pointer px-3 py-2 text-right"
+                              onClick={() => openDrill(acc.slug, m)}
+                            >
+                              {money(val)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Beginning balance + Net activity = Ending balance.
+              </p>
+            </Card>
+          </div>
+
+          {/* settings (minimal — allocations only, dynamic) */}
+          <div className="mt-6">
+            <Card title="Settings — Allocation Targets">
+              <div className="mb-3 flex items-center gap-3">
+                <span className="text-sm text-slate-700">Effective date</span>
+                <input
+                  type="date"
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1"
+                  value={allocDate}
+                  onChange={(e) => setAllocDate(e.target.value)}
+                />
+                <span
+                  className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
+                    allocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                  }`}
+                >
+                  Total: {(allocTotal * 100).toFixed(1)}%
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5">
+                {accounts.map((a) => (
+                  <div key={a.slug} className="space-y-1">
+                    <label className="text-sm font-medium text-slate-700">{a.name}</label>
+                    <input
+                      type="number"
+                      step={0.01}
+                      min={0}
+                      max={1}
+                      value={alloc[a.slug] ?? 0}
+                      onChange={(e) =>
+                        setAlloc((prev) => ({ ...prev, [a.slug]: Number(e.target.value) }))
+                      }
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
                     />
-                  ))
-                )}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+                  </div>
+                ))}
+              </div>
 
-        {/* ending balances table */}
-        <div className="mt-4">
-          <Card title="Ending Bank Balances (roll-forward)">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50">
-                    <th className="px-3 py-2 text-left font-semibold">Row</th>
-                    {months.map((m) => (
-                      <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
-                        {shortYM(m)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {accounts.map((acc) => (
-                    <tr key={acc.slug} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-slate-800">{acc.name} (End)</td>
-                      {months.map((m) => {
-                        const row = balByMonth.get(m) || {};
-                        const val = row[acc.slug] || 0;
-                        return (
-                          <td
-                            key={m}
-                            className="px-3 py-2 text-right cursor-pointer"
-                            onClick={() => openDrill(acc.slug, m)}
-                          >
-                            {money(val)}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        </div>
-
-        {/* monthly activity table */}
-        <div className="mt-4">
-          <Card title="Monthly Activity (net movement)">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50">
-                    <th className="px-3 py-2 text-left font-semibold">Account (net)</th>
-                    {months.map((m) => (
-                      <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
-                        {shortYM(m)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {accounts.map((acc) => (
-                    <tr key={acc.slug} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
-                      {months.map((m) => {
-                        const row = actByMonth.get(m) || {};
-                        const val = row[acc.slug] || 0;
-                        return (
-                          <td
-                            key={m}
-                            className="px-3 py-2 text-right cursor-pointer"
-                            onClick={() => openDrill(acc.slug, m)}
-                          >
-                            {money(val)}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">
-              Beginning balance + Net activity = Ending balance.
-            </p>
-          </Card>
-        </div>
-
-        {/* settings (minimal — allocations only, dynamic) */}
-        <div className="mt-6">
-          <Card title="Settings — Allocation Targets">
-            <div className="flex items-center gap-3 mb-3">
-              <span className="text-sm text-slate-700">Effective date</span>
-              <input
-                type="date"
-                className="border rounded-md px-2 py-1 bg-white"
-                value={allocDate}
-                onChange={(e) => setAllocDate(e.target.value)}
-              />
-              <span
-                className={`ml-auto text-xs font-semibold px-2 py-1 rounded ${
-                  allocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
-                }`}
-              >
-                Total: {(allocTotal * 100).toFixed(1)}%
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {accounts.map((a) => (
-                <div key={a.slug} className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">{a.name}</label>
-                  <input
-                    type="number"
-                    step={0.01}
-                    min={0}
-                    max={1}
-                    value={alloc[a.slug] ?? 0}
-                    onChange={(e) =>
-                      setAlloc((prev) => ({ ...prev, [a.slug]: Number(e.target.value) }))
-                    }
-                    className="w-full border rounded-lg px-3 py-2 bg-white"
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex gap-3">
-              <Button
-                disabled={!clientId || !allocOk}
-                onClick={async () => {
-                  if (!clientId || !allocOk) return;
-                  await Promise.all(
-                    accounts.map((a) =>
-                      supabase.from("allocation_targets").upsert(
-                        {
-                          client_id: clientId,
-                          effective_date: allocDate,
-                          pf_slug: a.slug,
-                          pct: alloc[a.slug] || 0,
-                        },
-                        { onConflict: "client_id, effective_date, pf_slug" }
+              <div className="mt-4 flex gap-3">
+                <Button
+                  disabled={!clientId || !allocOk}
+                  onClick={async () => {
+                    if (!clientId || !allocOk) return;
+                    await Promise.all(
+                      accounts.map((a) =>
+                        supabase.from("allocation_targets").upsert(
+                          {
+                            client_id: clientId,
+                            effective_date: allocDate,
+                            pf_slug: a.slug,
+                            pct: alloc[a.slug] || 0,
+                          },
+                          { onConflict: "client_id, effective_date, pf_slug" }
+                        )
                       )
-                    )
-                  );
-                  alert("Allocations saved.");
-                }}
-                className={`bg-[${BRAND.blue}] text-white border-none hover:opacity-90 ${
-                  !allocOk ? "opacity-60 cursor-not-allowed" : ""
-                }`}
-              >
-                Save Allocations
-              </Button>
-              <Button
-                className="bg-[color:var(--white)]"
-                onClick={() => location.reload()}
-              >
-                Recalculate
-              </Button>
-              <Button
-                onClick={async () => {
-                  if (!clientId) return;
-                  const name = prompt("Add PF account (example: Truck)");
-                  if (!name) return;
-                  const slug = toSlug(name);
-                  const { error } = await supabase.from("pf_accounts").insert({
-                    client_id: clientId,
-                    slug,
-                    name,
-                    sort_order: 100,
-                    color: "#8b5cf6",
-                  });
-                  if (error) return alert("Could not add account. Check RLS.");
-                  // reload accounts
-                  const { data: paf } = await supabase
-                    .from("pf_accounts")
-                    .select("slug, name, color, sort_order")
-                    .eq("client_id", clientId)
-                    .order("sort_order", { ascending: true })
-                    .order("name", { ascending: true });
-                  setAccounts((paf ?? []) as PFAccount[]);
-                  setAlloc((p) => ({ ...p, [slug]: 0 }));
-                }}
-              >
-                + Add Account
-              </Button>
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      {/* drill panel */}
-      {drill && (
-        <div className="fixed inset-0 z-40">
-          <div className="absolute inset-0 bg-black/30" onClick={() => setDrill(null)} />
-          <div className="absolute right-0 top-0 h-full w-full sm:w-[520px] bg-white shadow-2xl p-6 overflow-y-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-semibold text-slate-800">
-                {accounts.find((a) => a.slug === drill.slug)?.name} • {shortYM(drill.ym)}
-              </h3>
-              <button className="text-slate-600" onClick={() => setDrill(null)}>
-                ✕
-              </button>
-            </div>
-
-            {/* load occurrences for this account/month */}
-            <DrillTable
-              clientId={clientId!}
-              ym={drill.ym}
-              slug={drill.slug}
-              setOcc={setOcc}
-              occ={occ}
-              coaMap={coaMap}
-            />
+                    );
+                    alert("Allocations saved.");
+                  }}
+                  className={`!border-transparent !bg-[${BRAND.blue}] !text-white hover:opacity-90 ${
+                    !allocOk ? "opacity-60 cursor-not-allowed" : ""
+                  }`}
+                >
+                  Save Allocations
+                </Button>
+                <Button
+                  className="!border-slate-200"
+                  onClick={() => location.reload()}
+                >
+                  Recalculate
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!clientId) return;
+                    const name = prompt("Add PF account (example: Truck)");
+                    if (!name) return;
+                    const slug = toSlug(name);
+                    const { error } = await supabase.from("pf_accounts").insert({
+                      client_id: clientId,
+                      slug,
+                      name,
+                      sort_order: 100,
+                      color: "#8b5cf6",
+                    });
+                    if (error) return alert("Could not add account. Check RLS.");
+                    const { data: paf } = await supabase
+                      .from("pf_accounts")
+                      .select("slug, name, color, sort_order")
+                      .eq("client_id", clientId)
+                      .order("sort_order", { ascending: true })
+                      .order("name", { ascending: true });
+                    setAccounts((paf ?? []) as PFAccount[]);
+                    setAlloc((p) => ({ ...p, [slug]: 0 }));
+                  }}
+                >
+                  + Add Account
+                </Button>
+              </div>
+            </Card>
           </div>
-        </div>
-      )}
-    </main>
+
+          {/* drill panel */}
+          {drill && (
+            <div className="fixed inset-0 z-40">
+              <div className="absolute inset-0 bg-black/30" onClick={() => setDrill(null)} />
+              <div className="absolute right-0 top-0 h-full w-full overflow-y-auto bg-white p-6 shadow-2xl sm:w-[520px]">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-slate-800">
+                    {accounts.find((a) => a.slug === drill.slug)?.name} • {shortYM(drill.ym)}
+                  </h3>
+                  <button className="text-slate-600" onClick={() => setDrill(null)}>
+                    ✕
+                  </button>
+                </div>
+
+                {/* load occurrences for this account/month */}
+                <DrillTable
+                  clientId={clientId!}
+                  ym={drill.ym}
+                  slug={drill.slug}
+                  setOcc={setOcc}
+                  occ={occ}
+                  coaMap={coaMap}
+                />
+              </div>
+            </div>
+          )}
+          </div>
+        )}
+      </main>
+    </>
   );
+
 }
 
 // -------- helper components / functions --------

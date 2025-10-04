@@ -28,6 +28,69 @@ const shortYM = (ym: string) => {
 const toSlug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
+type AllocationTargets = {
+  profit: number;
+  owners_pay: number;
+  tax: number;
+  operating_expenses: number;
+};
+
+type AllocationBracket = {
+  label: string;
+  min: number;
+  max: number;
+  targets: AllocationTargets;
+};
+
+const ALLOCATION_BRACKETS: AllocationBracket[] = [
+  {
+    label: "$0 – $250K",
+    min: 0,
+    max: 250_000,
+    targets: { profit: 0.05, owners_pay: 0.5, tax: 0.15, operating_expenses: 0.3 },
+  },
+  {
+    label: "$250K – $500K",
+    min: 250_000,
+    max: 500_000,
+    targets: { profit: 0.1, owners_pay: 0.35, tax: 0.15, operating_expenses: 0.4 },
+  },
+  {
+    label: "$500K – $1M",
+    min: 500_000,
+    max: 1_000_000,
+    targets: { profit: 0.15, owners_pay: 0.2, tax: 0.15, operating_expenses: 0.5 },
+  },
+  {
+    label: "$1M – $5M",
+    min: 1_000_000,
+    max: 5_000_000,
+    targets: { profit: 0.1, owners_pay: 0.1, tax: 0.15, operating_expenses: 0.65 },
+  },
+  {
+    label: "$5M – $10M",
+    min: 5_000_000,
+    max: 10_000_000,
+    targets: { profit: 0.15, owners_pay: 0.05, tax: 0.1, operating_expenses: 0.7 },
+  },
+  {
+    label: "$10M – $50M",
+    min: 10_000_000,
+    max: 50_000_000,
+    targets: { profit: 0.2, owners_pay: 0, tax: 0.05, operating_expenses: 0.75 },
+  },
+];
+
+const getAllocationBracket = (revenue: number | null | undefined) => {
+  if (!revenue || revenue < 0) return null;
+  return (
+    ALLOCATION_BRACKETS.find((b) => revenue >= b.min && revenue < b.max) ??
+    ALLOCATION_BRACKETS[ALLOCATION_BRACKETS.length - 1] ??
+    null
+  );
+};
+
+
 // ------------------ types ------------------
 type ClientRow = { id: string; name: string };
 type PFAccount = { slug: string; name: string; color?: string | null; sort_order?: number | null };
@@ -37,7 +100,7 @@ type BalLong = { client_id: string; ym: string; pf_slug: string; ending_balance:
 
 type OccRow = {
   client_id: string;
-  month_start: string;
+  month_start: Date;
   coa_account_id: string;
   kind: string;
   name: string;
@@ -89,6 +152,7 @@ export default function Page() {
   // allocations (settings)
   const [alloc, setAlloc] = useState<Record<string, number>>({});
   const [allocDate, setAllocDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [autoBucket, setAutoBucket] = useState<string | null>(null);
 
   // drill
   const [drill, setDrill] = useState<{ slug: string; ym: string } | null>(null);
@@ -107,6 +171,10 @@ export default function Page() {
   // ------------ load data for a client ------------
   useEffect(() => {
     if (!clientId) return;
+    setAutoBucket(null);
+    setActivity([]);
+    setBalances([]);
+    setMonths([]);
     (async () => {
       // accounts
       const { data: paf } = await supabase
@@ -187,6 +255,84 @@ export default function Page() {
     return m;
   }, [balances]);
 
+  const slugMatches = useMemo(() => {
+    const findSlug = (predicate: (a: PFAccount) => boolean) =>
+      accounts.find(predicate)?.slug ?? null;
+    return {
+      profit: findSlug((a) => a.slug === "profit" || /profit/i.test(a.name)),
+      owners_pay: findSlug((a) => a.slug === "owners_pay" || /owner/i.test(a.name)),
+      tax: findSlug((a) => a.slug === "tax" || /tax/i.test(a.name)),
+      operating: findSlug((a) =>
+        a.slug === "operating" || /operat/i.test(a.slug) || /operat/i.test(a.name)
+      ),
+      realRevenue: findSlug(
+        (a) => a.slug === "real_revenue" || (/real/i.test(a.name) && /rev/i.test(a.name))
+      ),
+    };
+  }, [accounts]);
+
+  const realRevenueSlug = slugMatches.realRevenue;
+
+  const trailingRevenue = useMemo(() => {
+    if (!realRevenueSlug) return null;
+    const relevant = activity.filter((r) => r.pf_slug === realRevenueSlug);
+    if (!relevant.length) return null;
+    const sorted = [...relevant].sort((a, b) => (a.ym > b.ym ? 1 : a.ym < b.ym ? -1 : 0));
+    const last12 = sorted.slice(-12);
+    return last12.reduce((sum, r) => sum + Number(r.net_amount || 0), 0);
+  }, [activity, realRevenueSlug]);
+
+  const recommendedAlloc = useMemo(() => {
+    const bracket = getAllocationBracket(trailingRevenue);
+    if (!bracket) return null;
+    const mapping: Record<string, number> = {};
+    accounts.forEach((a) => {
+      let pct = alloc[a.slug] ?? 0;
+      if (slugMatches.profit && a.slug === slugMatches.profit) pct = bracket.targets.profit;
+      if (slugMatches.owners_pay && a.slug === slugMatches.owners_pay)
+        pct = bracket.targets.owners_pay;
+      if (slugMatches.tax && a.slug === slugMatches.tax) pct = bracket.targets.tax;
+      if (slugMatches.operating && a.slug === slugMatches.operating)
+        pct = bracket.targets.operating_expenses;
+      mapping[a.slug] = pct;
+    });
+    return { bracket, mapping };
+  }, [accounts, alloc, slugMatches, trailingRevenue]);
+
+  useEffect(() => {
+    if (!clientId || !allocDate || !recommendedAlloc || !accounts.length) return;
+    if (autoBucket === recommendedAlloc.bracket.label) return;
+
+    const nextMapping = { ...recommendedAlloc.mapping };
+    const changed = accounts.some((a) =>
+      Math.abs((alloc[a.slug] ?? 0) - (nextMapping[a.slug] ?? 0)) > 0.0001
+    );
+
+    setAutoBucket(recommendedAlloc.bracket.label);
+    if (!changed) return;
+
+    setAlloc(nextMapping);
+    (async () => {
+      try {
+        await Promise.all(
+          accounts.map((a) =>
+            supabase.from("allocation_targets").upsert(
+              {
+                client_id: clientId,
+                effective_date: allocDate,
+                pf_slug: a.slug,
+                pct: nextMapping[a.slug] ?? 0,
+              },
+              { onConflict: "client_id, effective_date, pf_slug" }
+            )
+          )
+        );
+      } catch (err) {
+        console.error("Failed to auto-update allocation targets", err);
+      }
+    })();
+  }, [accounts, alloc, allocDate, autoBucket, clientId, recommendedAlloc]);
+
   const chartData = useMemo(() => {
     return months.map((ym) => {
       const row = balByMonth.get(ym) || {};
@@ -206,13 +352,8 @@ export default function Page() {
   async function openDrill(slug: string, ym: string) {
     if (!clientId) return;
     setDrill({ slug, ym });
-    const { data } = await supabase
-      .from("v_proj_occurrences")
-      .select("client_id, month_start, coa_account_id, kind, name, amount")
-      .eq("client_id", clientId)
-      .eq("month_start", ym + "-01");
-    const filtered = (data ?? []).filter((r: any) => coaMap[r.coa_account_id] === slug);
-    setOcc(filtered as OccRow[]);
+    const occurrences = await fetchOccurrencesFor(clientId, ym, slug, coaMap);
+    setOcc(occurrences);
   }
 
   // ------------ render ------------
@@ -251,6 +392,19 @@ export default function Page() {
               onClick={async () => {
                 const name = prompt("New client name?");
                 if (!name) return;
+                const rangeMenu = ALLOCATION_BRACKETS.map(
+                  (b, idx) => `${idx + 1}) ${b.label}`
+                ).join("\n");
+                const rangeSelection = prompt(
+                  `Select the client's real revenue range (1-${ALLOCATION_BRACKETS.length}):\n${rangeMenu}`
+                );
+                if (rangeSelection === null) return;
+                const rangeIndex = Number(rangeSelection.trim()) - 1;
+                const selectedBracket = ALLOCATION_BRACKETS[rangeIndex];
+                if (!selectedBracket) {
+                  alert("Invalid range selected. Client was not created.");
+                  return;
+                }
                 const { data, error } = await supabase.from("clients").insert({ name }).select().single();
                 if (error) return alert("Could not add client. Check policies.");
                 setClients((p) => [...p, data as ClientRow]);
@@ -263,9 +417,29 @@ export default function Page() {
                   { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
                   { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
                 ];
-                await supabase.from("pf_accounts").insert(
-                  core.map((r) => ({ client_id: (data as any).id, ...r }))
+                const clientIdCreated = (data as any).id;
+                await supabase
+                  .from("pf_accounts")
+                  .insert(core.map((r) => ({ client_id: clientIdCreated, ...r })));
+                const today = new Date().toISOString().slice(0, 10);
+                const defaultAlloc: Record<string, number> = {
+                  operating: selectedBracket.targets.operating_expenses,
+                  profit: selectedBracket.targets.profit,
+                  owners_pay: selectedBracket.targets.owners_pay,
+                  tax: selectedBracket.targets.tax,
+                  vault: 0,
+                };
+                await supabase.from("allocation_targets").upsert(
+                  core.map((acc) => ({
+                    client_id: clientIdCreated,
+                    effective_date: today,
+                    pf_slug: acc.slug,
+                    pct: defaultAlloc[acc.slug] ?? 0,
+                  })),
+                  { onConflict: "client_id, effective_date, pf_slug" }
                 );
+                setAllocDate(today);
+                setAlloc(defaultAlloc);
               }}
             >
               + Add Client
@@ -605,6 +779,39 @@ export default function Page() {
 }
 
 // -------- helper components / functions --------
+async function fetchOccurrencesFor(
+  clientId: string,
+  ym: string,
+  slug: string,
+  coaMap: Record<string, string>
+): Promise<OccRow[]> {
+  const ymDate = `${ym}-01`;
+  const { data } = await supabase
+    .from("v_proj_occurrences")
+    .select("client_id, month_start, coa_account_id, kind, name, amount")
+    .eq("client_id", clientId)
+    .eq("month_start", ymDate);
+
+  return (data ?? [])
+    .filter((row: any) => coaMap[row.coa_account_id] === slug)
+    .map((row: any) => {
+      const raw = row.month_start;
+      const monthStart =
+        raw instanceof Date ? raw : typeof raw === "string" ? new Date(raw) : null;
+      if (!monthStart || Number.isNaN(monthStart.getTime())) return null;
+
+      return {
+        client_id: row.client_id,
+        month_start: monthStart,
+        coa_account_id: row.coa_account_id,
+        kind: row.kind,
+        name: row.name,
+        amount: Number(row.amount ?? 0),
+      };
+    })
+    .filter((row): row is OccRow => Boolean(row));
+}
+
 function filterMonths(all: string[], startYM: string, horizon: number) {
   const [y, m] = startYM.split("-").map(Number);
   const start = new Date(y, m - 1, 1);
@@ -633,15 +840,10 @@ function DrillTable({
 }) {
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("v_proj_occurrences")
-        .select("client_id, month_start, coa_account_id, kind, name, amount")
-        .eq("client_id", clientId)
-        .eq("month_start", ym + "-01");
-      const filtered = (data ?? []).filter((r: any) => coaMap[r.coa_account_id] === slug);
-      setOcc(filtered as OccRow[]);
+      const occurrences = await fetchOccurrencesFor(clientId, ym, slug, coaMap);
+      setOcc(occurrences);
     })();
-  }, [clientId, ym, slug]);
+  }, [clientId, ym, slug, coaMap]);
 
   const inflows = occ.filter((r) => r.amount > 0);
   const outflows = occ.filter((r) => r.amount < 0);

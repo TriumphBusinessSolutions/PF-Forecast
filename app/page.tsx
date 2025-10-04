@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import Head from "next/head";
 import Link from "next/link";
 import {
@@ -133,7 +133,7 @@ const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({ class
   <button
     {...p}
     className={
-      "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium transition hover:bg-slate-50 " +
+      "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 " +
       (className || "")
     }
   />
@@ -153,7 +153,7 @@ export default function Page() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
-  const [scenarioName, setScenarioName] = useState<string>("Base Case");
+  const [isClientMenuOpen, setIsClientMenuOpen] = useState(false);
 
   // dynamic accounts + data
   const [accounts, setAccounts] = useState<PFAccount[]>([]);
@@ -183,6 +183,7 @@ export default function Page() {
   const [customProjections, setCustomProjections] = useState<CustomProjection[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+  const clientMenuRef = useRef<HTMLDivElement | null>(null);
 
   // ------------ bootstrap clients ------------
   useEffect(() => {
@@ -746,7 +747,30 @@ export default function Page() {
   const allocOk = Math.abs(allocTotal - 1) < 0.0001;
   const drillAccount = drill ? displayAccounts.find((a) => a.slug === drill.slug) : null;
   const activeClient = clients.find((c) => c.id === clientId);
-  const horizonChoices = granularity === "weekly" ? [13] : [9, 12, 18, 24];
+  useEffect(() => {
+    if (!isClientMenuOpen) return;
+
+    const handleClick = (event: MouseEvent) => {
+      if (!clientMenuRef.current) return;
+      if (!clientMenuRef.current.contains(event.target as Node)) {
+        setIsClientMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [isClientMenuOpen]);
+
+  const handleIncrementHorizon = (delta: number) => {
+    setHorizon((prev) => {
+      const next = prev + delta;
+      const min = 1;
+      const max = 24;
+      return Math.min(Math.max(next, min), max);
+    });
+  };
+
+  const quickHorizonChoices = [9, 12, 18, 24];
   const currentPeriod = periods[0];
   const finalPeriod = periods[periods.length - 1];
   const describePeriodValue = (period?: Period) => {
@@ -794,86 +818,117 @@ export default function Page() {
       <div className="flex min-h-screen flex-col">
         <header className="border-b border-slate-200 bg-white/80 backdrop-blur">
           <div className="mx-auto w-full max-w-7xl px-6 py-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-semibold text-slate-900">Profit First cash projection</h1>
                 <p className="text-sm text-slate-500">
                   {activeClient?.name ? `Align allocations for ${activeClient.name}.` : "Select a client to begin."}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col items-end gap-3">
                 <Link
                   href="/settings"
-                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-400 hover:text-blue-600"
+                  className="self-end rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-400 hover:text-blue-600"
                 >
                   Settings
                 </Link>
-              </div>
-            </div>
-            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <label className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-wide text-slate-500">Scenario name</span>
-                <input
-                  value={scenarioName}
-                  onChange={(e) => setScenarioName(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none"
-                />
-              </label>
-              <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
-                <span className="text-xs uppercase tracking-wide text-slate-500">Client</span>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={clientId ?? ""}
-                    onChange={(e) => setClientId(e.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
-                  >
-                    {clients.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    onClick={async () => {
-                      const name = prompt("New client name?");
-                      if (!name) return;
-                      if (!supabase) {
-                        alert(
-                          "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to create clients."
-                        );
-                        return;
-                      }
-                      const { data, error } = await supabase
-                        .from("clients")
-                        .insert({ name })
-                        .select()
-                        .single();
-                      if (error) return alert("Could not add client. Check policies.");
-                      setClients((p) => [...p, data as ClientRow]);
-                      setClientId((data as any).id);
-                      const core = [
-                        { slug: "income", name: "Income", sort_order: 1, color: "#0284c7" },
-                        { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
-                        { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
-                        { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
-                        { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
-                        { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
-                      ];
-                      await supabase
-                        .from("pf_accounts")
-                        .insert(core.map((r) => ({ client_id: (data as any).id, ...r })));
-                    }}
-                  >
-                    + Client
-                  </Button>
+                <div className="relative" ref={clientMenuRef}>
+                  <span className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Active client</span>
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow">
+                      {activeClient?.name ?? "Select client"}
+                    </div>
+                    <Button
+                      onClick={() => setIsClientMenuOpen((prev) => !prev)}
+                      className="px-3 py-2 text-xs"
+                      disabled={clients.length === 0}
+                      aria-haspopup="listbox"
+                      aria-expanded={isClientMenuOpen}
+                    >
+                      {isClientMenuOpen ? "Close" : "Switch"}
+                    </Button>
+                    <Button
+                      onClick={async () => {
+                        const name = prompt("New client name?");
+                        if (!name) return;
+                        if (!supabase) {
+                          alert(
+                            "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to create clients."
+                          );
+                          return;
+                        }
+                        const { data, error } = await supabase
+                          .from("clients")
+                          .insert({ name })
+                          .select()
+                          .single();
+                        if (error) {
+                          alert("Could not add client. Check policies.");
+                          return;
+                        }
+                        setClients((p) => [...p, data as ClientRow]);
+                        setClientId((data as any).id);
+                        const core = [
+                          { slug: "income", name: "Income", sort_order: 1, color: "#0284c7" },
+                          { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
+                          { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
+                          { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
+                          { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
+                          { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
+                        ];
+                        await supabase
+                          .from("pf_accounts")
+                          .insert(core.map((r) => ({ client_id: (data as any).id, ...r })));
+                      }}
+                      className="px-3 py-2 text-xs"
+                    >
+                      + Client
+                    </Button>
+                  </div>
+                  {isClientMenuOpen && (
+                    <div className="absolute right-0 z-20 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                      <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-slate-400">Switch client</p>
+                      <div className="max-h-60 overflow-y-auto">
+                        {clients.map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => {
+                              setClientId(c.id);
+                              setIsClientMenuOpen(false);
+                            }}
+                            className={cn(
+                              "flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition",
+                              c.id === clientId
+                                ? "bg-blue-50 font-semibold text-blue-700"
+                                : "text-slate-600 hover:bg-slate-100"
+                            )}
+                          >
+                            <span>{c.name}</span>
+                            {c.id === clientId && <span className="text-xs uppercase text-blue-500">Active</span>}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
+            </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <label className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
                 <span className="text-xs uppercase tracking-wide text-slate-500">Starting period</span>
                 <input
                   type="month"
                   value={startMonth}
                   onChange={(e) => setStartMonth(e.target.value)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                />
+              </label>
+              <label className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Allocation date</span>
+                <input
+                  type="date"
+                  value={allocDate}
+                  onChange={(e) => setAllocDate(e.target.value)}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
                 />
               </label>
@@ -972,17 +1027,46 @@ export default function Page() {
                             13-week
                           </button>
                         </div>
-                        <select
-                          className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm"
-                          value={horizon}
-                          onChange={(e) => setHorizon(Number(e.target.value))}
-                        >
-                          {horizonChoices.map((choice) => (
-                            <option key={choice} value={choice}>
-                              {choice} {granularity === "weekly" ? "weeks" : "months"}
-                            </option>
-                          ))}
-                        </select>
+                        {granularity === "monthly" ? (
+                          <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 shadow-sm">
+                            <button
+                              onClick={() => handleIncrementHorizon(-1)}
+                              className="rounded-full px-2 py-1 text-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                              aria-label="Show fewer months"
+                            >
+                              ‹
+                            </button>
+                            <select
+                              className="bg-transparent px-2 py-1 text-sm font-medium text-slate-700 focus:outline-none"
+                              value={quickHorizonChoices.includes(horizon) ? String(horizon) : "custom"}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (value === "custom") return;
+                                setHorizon(Number(value));
+                              }}
+                            >
+                              {quickHorizonChoices.map((choice) => (
+                                <option key={choice} value={String(choice)}>
+                                  {choice} months
+                                </option>
+                              ))}
+                              {!quickHorizonChoices.includes(horizon) && (
+                                <option value="custom">{horizon} months</option>
+                              )}
+                            </select>
+                            <button
+                              onClick={() => handleIncrementHorizon(1)}
+                              className="rounded-full px-2 py-1 text-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                              aria-label="Show more months"
+                            >
+                              ›
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm">
+                            13 weeks
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="mt-8 h-[360px] w-full rounded-2xl bg-slate-50 p-4">

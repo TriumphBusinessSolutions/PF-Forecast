@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useEffect, useCallback } from "react";
 import Head from "next/head";
+import Link from "next/link";
 import {
   AreaChart,
   Area,
@@ -143,25 +144,6 @@ export default function Page() {
   // allocations (settings)
   const [alloc, setAlloc] = useState<Record<string, number>>({});
   const [allocDate, setAllocDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
-  const [allocationSettings, setAllocationSettings] = useState({
-    cadence: "weekly" as "weekly" | "semi_monthly" | "monthly",
-    weekDay: "friday",
-    semiMonthlyDays: [10, 25],
-    monthlyDay: 1,
-  });
-  const [rolloutPlan, setRolloutPlan] = useState({ quarters: 4 });
-  const [profitSettings, setProfitSettings] = useState({
-    bonusPct: 0.5,
-    vaultPct: 0.5,
-    nextDistribution: new Date().toISOString().slice(0, 10),
-  });
-  const [taxSettings, setTaxSettings] = useState({
-    mode: "calculation" as "flat" | "calculation",
-    flatAmount: 0,
-    taxRate: 0.1,
-    estimatedPaid: 0,
-    vaultPct: 0.0,
-  });
 
   // drill
   const [drill, setDrill] = useState<
@@ -455,14 +437,25 @@ export default function Page() {
     }
     return sum + cost;
   }, 0);
-  const allocationSummary = describeAllocationCadence(allocationSettings);
-  const profitDistributionLabel = formatLongDate(profitSettings.nextDistribution);
-  const taxSummaryLabel =
-    taxSettings.mode === "calculation"
-      ? `Calculated at ${(taxSettings.taxRate * 100).toFixed(1)}% less $${taxSettings.estimatedPaid.toLocaleString()} paid`
-      : `Flat $${taxSettings.flatAmount.toLocaleString()} split quarterly`;
+  const getAccountColor = useCallback(
+    (slug: string) => displayAccounts.find((a) => a.slug === slug)?.color || "#64748b",
+    [displayAccounts]
+  );
   const profitTargetPct = (alloc["profit"] ?? 0) * 100;
   const taxTargetPct = (alloc["tax"] ?? 0) * 100;
+  const ownersPayTargetPct = (alloc["owners_pay"] ?? 0) * 100;
+  const operatingTargetPct = (alloc["operating"] ?? 0) * 100;
+  const vaultTargetPct = (alloc["vault"] ?? 0) * 100;
+  const averageRealRevenue = periods.length ? realRevenueProjection / periods.length : 0;
+  const averageDirectCosts = periods.length ? directCostProjection / periods.length : 0;
+  const netRealRevenueAvg = averageRealRevenue - averageDirectCosts;
+  const averageNetChange = periods.length ? projectedChange / periods.length : 0;
+  const timelineLabel = granularity === "weekly" ? "Weekly" : "Monthly";
+  const periodCountLabel = periods.length
+    ? `${periods.length} ${timelineLabel.toLowerCase()}${periods.length === 1 ? "" : "s"}`
+    : "No periods";
+  const periodRangeLabel =
+    currentPeriod && finalPeriod ? `${currentPeriod.label} – ${finalPeriod.label}` : "Forecast unavailable";
 
   return (
     <main className="min-h-screen bg-slate-100">
@@ -477,236 +470,316 @@ export default function Page() {
         html, body { font-family: Rubik, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
       `}</style>
 
-      <div className="mx-auto w-full max-w-[1400px] px-4 py-6 space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-gradient-to-r from-blue-50 via-white to-orange-50 p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
+      <div className="flex min-h-screen flex-col">
+        <header className="border-b border-slate-200 bg-white/90 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-4 px-6 py-4">
+            <div className="flex flex-1 flex-wrap items-end gap-6">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Scenario</p>
                 <input
                   value={scenarioName}
                   onChange={(e) => setScenarioName(e.target.value)}
-                  className="min-w-[220px] rounded-xl border border-transparent bg-white/80 px-4 py-3 text-lg font-semibold text-slate-800 shadow-sm focus:border-blue-400 focus:outline-none"
+                  className="mt-1 w-full min-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none"
                 />
-                <span className="rounded-full bg-white/60 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Scenario
-                </span>
               </div>
-              <p className="text-sm text-slate-600">
-                Profit First cash projection for {" "}
-                <span className="font-medium text-slate-800">{activeClient?.name ?? "your client"}</span>.
-              </p>
-              <p className="text-xs text-slate-500">
-                Viewing {granularity === "weekly" ? "13-week" : `${horizon}-month`} outlook beginning {formatLongDate(`${startMonth}-01`)}.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={clientId ?? ""}
-                onChange={(e) => setClientId(e.target.value)}
-                className="rounded-lg border border-white/80 bg-white/90 px-3 py-2 text-sm font-medium text-slate-700 shadow-sm"
-              >
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <Button
-                onClick={async () => {
-                  const name = prompt("New client name?");
-                  if (!name) return;
-                  const { data, error } = await supabase.from("clients").insert({ name }).select().single();
-                  if (error) return alert("Could not add client. Check policies.");
-                  setClients((p) => [...p, data as ClientRow]);
-                  setClientId((data as any).id);
-                  const core = [
-                    { slug: "income", name: "Income", sort_order: 1, color: "#0284c7" },
-                    { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
-                    { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
-                    { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
-                    { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
-                    { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
-                  ];
-                  await supabase.from("pf_accounts").insert(
-                    core.map((r) => ({ client_id: (data as any).id, ...r }))
-                  );
-                }}
-              >
-                + Add Client
-              </Button>
-            </div>
-          </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-2xl bg-white/70 p-4 shadow-sm ring-1 ring-white/60">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Timeframe
-              </label>
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => setGranularity("monthly")}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                    granularity === "monthly"
-                      ? "border-blue-500 bg-blue-500 text-white shadow-sm"
-                      : "border-slate-200 bg-white/80 text-slate-600 hover:border-blue-300"
-                  }`}
-                >
-                  Monthly
-                </button>
-                <button
-                  onClick={() => setGranularity("weekly")}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                    granularity === "weekly"
-                      ? "border-blue-500 bg-blue-500 text-white shadow-sm"
-                      : "border-slate-200 bg-white/80 text-slate-600 hover:border-blue-300"
-                  }`}
-                >
-                  Weekly
-                </button>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Client</p>
+                <div className="mt-1 flex items-center gap-2">
+                  <select
+                    value={clientId ?? ""}
+                    onChange={(e) => setClientId(e.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                  >
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    onClick={async () => {
+                      const name = prompt("New client name?");
+                      if (!name) return;
+                      const { data, error } = await supabase.from("clients").insert({ name }).select().single();
+                      if (error) return alert("Could not add client. Check policies.");
+                      setClients((p) => [...p, data as ClientRow]);
+                      setClientId((data as any).id);
+                      const core = [
+                        { slug: "income", name: "Income", sort_order: 1, color: "#0284c7" },
+                        { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
+                        { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
+                        { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
+                        { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
+                        { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
+                      ];
+                      await supabase
+                        .from("pf_accounts")
+                        .insert(core.map((r) => ({ client_id: (data as any).id, ...r })));
+                    }}
+                  >
+                    + Client
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="rounded-2xl bg-white/70 p-4 shadow-sm ring-1 ring-white/60">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Projection horizon
-              </label>
-              <select
-                value={horizon}
-                onChange={(e) => setHorizon(Number(e.target.value))}
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-              >
-                {horizonChoices.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="rounded-2xl bg-white/70 p-4 shadow-sm ring-1 ring-white/60">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Start month
-              </label>
-              <input
-                type="month"
-                value={startMonth}
-                onChange={(e) => setStartMonth(e.target.value)}
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-              />
-            </div>
-            <div className="rounded-2xl bg-white/70 p-4 shadow-sm ring-1 ring-white/60">
-              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Chart mode
-              </label>
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as any)}
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
-              >
-                <option value="total">Total balance</option>
-                <option value="accounts">Individual accounts</option>
-              </select>
-            </div>
-          </div>
-        </section>
-
-        <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
-          <aside className="space-y-4">
-            <Card title="Forecast snapshot">
-              <dl className="space-y-3 text-sm">
-                <div className="flex items-center justify-between">
-                  <dt className="text-slate-600">Starting balance ({currentPeriod?.label ?? "—"})</dt>
-                  <dd className="font-semibold text-slate-900">{money(currentTotalBalance)}</dd>
-                </div>
-                <div className="flex items-center justify-between">
-                  <dt className="text-slate-600">Projected ending ({finalPeriod?.label ?? "—"})</dt>
-                  <dd className="font-semibold text-slate-900">{money(endingTotalBalance)}</dd>
-                </div>
-                <div className="flex items-center justify-between">
-                  <dt className="text-slate-600">Change over horizon</dt>
-                  <dd
-                    className={`font-semibold ${
-                      projectedChange >= 0 ? "text-emerald-600" : "text-rose-600"
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Starting period</p>
+                <input
+                  type="month"
+                  value={startMonth}
+                  onChange={(e) => setStartMonth(e.target.value)}
+                  className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">View</p>
+                <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <button
+                    onClick={() => setGranularity("monthly")}
+                    className={`px-3 py-2 text-sm font-medium transition ${
+                      granularity === "monthly"
+                        ? "bg-white text-blue-600 shadow-inner"
+                        : "text-slate-500 hover:text-slate-700"
                     }`}
                   >
-                    {money(projectedChange)}
-                  </dd>
+                    Monthly
+                  </button>
+                  <button
+                    onClick={() => setGranularity("weekly")}
+                    className={`px-3 py-2 text-sm font-medium transition ${
+                      granularity === "weekly"
+                        ? "bg-white text-blue-600 shadow-inner"
+                        : "text-slate-500 hover:text-slate-700"
+                    }`}
+                  >
+                    13-week
+                  </button>
                 </div>
-              </dl>
-            </Card>
-
-            <Card title="Real revenue outlook">
-              <p className="text-sm text-slate-600">
-                Projected real revenue across this horizon totals {money(realRevenueProjection)} with direct costs of {" "}
-                {money(directCostProjection)}.
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                Profit target {profitTargetPct.toFixed(1)}% • Tax target {taxTargetPct.toFixed(1)}%.
-              </p>
-            </Card>
-
-            <Card title="Key timelines">
-              <ul className="space-y-2 text-sm text-slate-600">
-                <li>
-                  <span className="font-semibold text-slate-800">Allocations:</span> {allocationSummary}
-                </li>
-                <li>
-                  <span className="font-semibold text-slate-800">Profit distribution:</span> {profitDistributionLabel}
-                  {" "}• Bonus {Math.round(profitSettings.bonusPct * 100)}% / Vault {Math.round(profitSettings.vaultPct * 100)}% of remainder
-                </li>
-                <li>
-                  <span className="font-semibold text-slate-800">Tax strategy:</span> {taxSummaryLabel}
-                </li>
-              </ul>
-              <button
-                onClick={() => document.getElementById("settings-allocation")?.scrollIntoView({ behavior: "smooth" })}
-                className="mt-3 text-xs font-semibold text-blue-600 hover:underline"
-              >
-                Edit settings
-              </button>
-            </Card>
-          </aside>
-
-          <section className="space-y-6">
-            <Card title={granularity === "weekly" ? "Projected Ending Balances (weekly view)" : "Projected Ending Balances"}>
-              <div className="h-[320px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 12, right: 24, bottom: 12, left: 24 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="label" />
-                    <YAxis tickFormatter={(v) => money(Number(v))} width={90} />
-                    <Tooltip formatter={(v: any) => money(Number(v))} />
-                    <Legend />
-                    {mode === "total" ? (
-                      <Area type="monotone" dataKey="Total" stroke={BRAND.blue} fillOpacity={0.15} />
-                    ) : (
-                      displayAccounts.map((a) => (
-                        <Area
-                          key={a.slug}
-                          type="monotone"
-                          dataKey={a.name}
-                          stroke={a.color || "#64748b"}
-                          fillOpacity={0.1}
-                        />
-                      ))
-                    )}
-                  </AreaChart>
-                </ResponsiveContainer>
               </div>
-              <p className="mt-3 text-xs text-slate-500">
-                Includes derived accounts for Direct Costs and Real Revenue to align with Profit First guidance.
-              </p>
-            </Card>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Horizon</p>
+                <select
+                  value={String(horizon)}
+                  onChange={(e) => setHorizon(Number(e.target.value))}
+                  className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                >
+                  {horizonChoices.map((choice) => (
+                    <option key={choice} value={choice}>
+                      {choice} {granularity === "weekly" ? "weeks" : "months"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/settings"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-blue-400 hover:text-blue-600"
+              >
+                Settings
+              </Link>
+            </div>
+          </div>
+        </header>
 
-            <div className="space-y-4">
-              <Card title={`Ending Balances (${granularity === "weekly" ? "weekly roll-forward" : "month end"})`}>
+        <div className="flex flex-1 flex-col">
+          <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-6 xl:flex-row">
+            <aside className="w-full space-y-6 xl:max-w-sm">
+              <Card>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">{timelineLabel} outlook</p>
+                    <h2 className="mt-2 text-3xl font-semibold text-slate-900">{money(currentTotalBalance)}</h2>
+                    <p className="mt-2 text-sm text-slate-500">
+                      Current balance across Profit First accounts for {activeClient?.name ?? "your client"}.
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      projectedChange >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                    }`}
+                  >
+                    {projectedChange >= 0 ? "+" : ""}
+                    {money(projectedChange)}
+                  </span>
+                </div>
+                <dl className="mt-6 space-y-4 text-sm">
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Forecast window</dt>
+                    <dd className="font-semibold text-slate-700">{periodRangeLabel}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Periods</dt>
+                    <dd className="font-semibold text-slate-700">{periodCountLabel}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Net change</dt>
+                    <dd className={`font-semibold ${projectedChange >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                      {projectedChange >= 0 ? "+" : ""}
+                      {money(projectedChange)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Average net</dt>
+                    <dd className="font-semibold text-slate-700">{money(averageNetChange)}</dd>
+                  </div>
+                </dl>
+              </Card>
+
+              <Card>
+                <h3 className="text-sm font-semibold text-slate-700">Revenue &amp; costs</h3>
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Avg real revenue</dt>
+                    <dd className="font-semibold text-slate-800">{money(averageRealRevenue)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Avg direct costs</dt>
+                    <dd className="font-semibold text-slate-800">{money(averageDirectCosts)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-slate-500">Avg net revenue</dt>
+                    <dd className={`font-semibold ${netRealRevenueAvg >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                      {money(netRealRevenueAvg)}
+                    </dd>
+                  </div>
+                </dl>
+                <p className="mt-4 text-xs text-slate-500">
+                  Real revenue subtracts direct costs (materials and direct labor) from income to follow Profit First guidance.
+                </p>
+              </Card>
+
+              <Card>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-700">Allocation targets</h3>
+                  <Link href="/settings" className="text-xs font-semibold text-blue-600 hover:underline">
+                    Edit
+                  </Link>
+                </div>
+                <ul className="mt-4 space-y-3 text-sm">
+                  {[
+                    { slug: "profit", label: "Profit", value: profitTargetPct },
+                    { slug: "owners_pay", label: "Owner's Pay", value: ownersPayTargetPct },
+                    { slug: "tax", label: "Tax", value: taxTargetPct },
+                    { slug: "operating", label: "Operating Expenses", value: operatingTargetPct },
+                    { slug: "vault", label: "Vault", value: vaultTargetPct },
+                  ].map((row) => (
+                    <li key={row.slug} className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: getAccountColor(row.slug) }}
+                        />
+                        <span className="text-slate-600">{row.label}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${Math.min(row.value, 100)}%`,
+                              backgroundColor: getAccountColor(row.slug),
+                            }}
+                          />
+                        </div>
+                        <span className="font-semibold text-slate-800">{row.value.toFixed(1)}%</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-xs text-slate-500">
+                  Targets update from the latest allocation saved in your Supabase workspace.
+                </p>
+              </Card>
+            </aside>
+
+            <section className="flex-1 space-y-6">
+              <Card>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-500">{timelineLabel} cash flow</p>
+                    <h2 className="mt-1 text-2xl font-semibold text-slate-900">
+                      {activeClient?.name ?? "Client"} forecast
+                    </h2>
+                    <p className="mt-2 text-sm text-slate-500">
+                      {periodRangeLabel}. Toggle totals or individual accounts to explore the projection.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                      <button
+                        onClick={() => setMode("total")}
+                        className={`px-3 py-2 text-sm font-medium transition ${
+                          mode === "total"
+                            ? "bg-white text-blue-600 shadow-inner"
+                            : "text-slate-500 hover:text-slate-700"
+                        }`}
+                      >
+                        Totals
+                      </button>
+                      <button
+                        onClick={() => setMode("accounts")}
+                        className={`px-3 py-2 text-sm font-medium transition ${
+                          mode === "accounts"
+                            ? "bg-white text-blue-600 shadow-inner"
+                            : "text-slate-500 hover:text-slate-700"
+                        }`}
+                      >
+                        Accounts
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-6 h-[360px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="label" stroke="#475569" fontSize={12} />
+                      <YAxis
+                        stroke="#475569"
+                        fontSize={12}
+                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                      />
+                      <Tooltip formatter={(value: number) => money(value)} />
+                      <Legend />
+                      {mode === "total" ? (
+                        <Area
+                          type="monotone"
+                          dataKey="Total"
+                          stroke={BRAND.blue}
+                          fillOpacity={0.15}
+                          fill={BRAND.blue}
+                        />
+                      ) : (
+                        displayAccounts.map((a) => (
+                          <Area
+                            key={a.slug}
+                            type="monotone"
+                            dataKey={a.name}
+                            stroke={a.color || "#64748b"}
+                            fillOpacity={0.1}
+                            fill={a.color || "#64748b"}
+                          />
+                        ))
+                      )}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="mt-4 text-xs text-slate-500">
+                  Chart values display projected ending balances. Switch to weekly mode to view 13-week allocations.
+                </p>
+              </Card>
+
+              <Card title={`Ending balances (${granularity === "weekly" ? "weekly roll-forward" : "month end"})`}>
+                <p className="mb-3 text-xs text-slate-500">
+                  Click any value to open the detailed account drill-down.
+                </p>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
+                  <table className="min-w-full table-fixed text-sm">
                     <thead>
                       <tr className="bg-slate-50">
-                        <th className="px-3 py-2 text-left font-semibold">Account</th>
+                        <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 text-left font-semibold">Account</th>
                         {periods.map((period) => (
-                          <th
-                            key={period.key}
-                            className="px-3 py-2 text-right font-semibold whitespace-nowrap"
-                          >
+                          <th key={period.key} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                             {period.label}
                           </th>
                         ))}
@@ -714,13 +787,10 @@ export default function Page() {
                     </thead>
                     <tbody>
                       {displayAccounts.map((acc) => (
-                        <tr key={acc.slug} className="hover:bg-slate-50">
-                          <td className="px-3 py-2 font-medium text-slate-800">
+                        <tr key={acc.slug} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                          <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-slate-800">
                             <div className="flex items-center gap-2">
-                              <span
-                                className="inline-block h-2 w-2 rounded-full"
-                                style={{ backgroundColor: acc.color }}
-                              />
+                              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: acc.color }} />
                               <span>{acc.name}</span>
                               {!acc.configured && (
                                 <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">
@@ -739,7 +809,7 @@ export default function Page() {
                             return (
                               <td
                                 key={period.key}
-                                className="px-3 py-2 text-right cursor-pointer"
+                                className="px-3 py-2 text-right font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-600"
                                 onClick={() => openDrill(acc.slug, period)}
                               >
                                 {money(value)}
@@ -753,17 +823,17 @@ export default function Page() {
                 </div>
               </Card>
 
-              <Card title={`${granularity === "weekly" ? "Weekly" : "Monthly"} Net Activity`}>
+              <Card title={`${granularity === "weekly" ? "Weekly" : "Monthly"} net activity`}>
+                <p className="mb-3 text-xs text-slate-500">
+                  Net activity shows inflows minus outflows for each account. Ending balance equals beginning balance plus net activity.
+                </p>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
+                  <table className="min-w-full table-fixed text-sm">
                     <thead>
                       <tr className="bg-slate-50">
-                        <th className="px-3 py-2 text-left font-semibold">Account</th>
+                        <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 text-left font-semibold">Account</th>
                         {periods.map((period) => (
-                          <th
-                            key={period.key}
-                            className="px-3 py-2 text-right font-semibold whitespace-nowrap"
-                          >
+                          <th key={period.key} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
                             {period.label}
                           </th>
                         ))}
@@ -771,8 +841,8 @@ export default function Page() {
                     </thead>
                     <tbody>
                       {displayAccounts.map((acc) => (
-                        <tr key={acc.slug} className="hover:bg-slate-50">
-                          <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
+                        <tr key={acc.slug} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                          <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-slate-800">{acc.name}</td>
                           {periods.map((period) => {
                             const net = monthlyActivityForSlug(period.month, acc.slug);
                             const value =
@@ -782,7 +852,7 @@ export default function Page() {
                             return (
                               <td
                                 key={period.key}
-                                className="px-3 py-2 text-right cursor-pointer"
+                                className="px-3 py-2 text-right font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-600"
                                 onClick={() => openDrill(acc.slug, period)}
                               >
                                 {money(value)}
@@ -794,388 +864,11 @@ export default function Page() {
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Beginning balance + Net activity = Ending balance for each period.
-                </p>
               </Card>
-            </div>
-          </section>
-        </div>
-
-        <div id="settings-allocation">
-          <Card title="Allocation targets">
-          <p className="text-sm text-slate-600">
-            Set the target allocation percentages for each Profit First account. Totals must equal 100%.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              Effective date
-              <input
-                type="date"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                value={allocDate}
-                onChange={(e) => setAllocDate(e.target.value)}
-              />
-            </label>
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                allocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
-              }`}
-            >
-              Total: {(allocTotal * 100).toFixed(1)}%
-            </span>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-              Custom accounts remaining: {Math.max(0, CUSTOM_ACCOUNT_LIMIT - customAccounts.length)}
-            </span>
+            </section>
           </div>
-
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {allocationAccounts.map((a) => (
-              <div key={a.slug} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="flex items-center justify-between text-sm font-medium text-slate-700">
-                  <span>{a.name}</span>
-                  <span className="text-xs text-slate-500">{((alloc[a.slug] ?? 0) * 100).toFixed(1)}%</span>
-                </div>
-                <input
-                  type="number"
-                  step={0.01}
-                  min={0}
-                  max={1}
-                  value={alloc[a.slug] ?? 0}
-                  onChange={(e) => setAlloc((prev) => ({ ...prev, [a.slug]: Number(e.target.value) }))}
-                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <Button
-              disabled={!clientId || !allocOk}
-              onClick={async () => {
-                if (!clientId || !allocOk) return;
-                await Promise.all(
-                  allocationAccounts.map((a) =>
-                    supabase.from("allocation_targets").upsert(
-                      {
-                        client_id: clientId,
-                        effective_date: allocDate,
-                        pf_slug: a.slug,
-                        pct: alloc[a.slug] || 0,
-                      },
-                      { onConflict: "client_id, effective_date, pf_slug" }
-                    )
-                  )
-                );
-                alert("Allocations saved.");
-              }}
-              className={`border-blue-600 bg-blue-600 text-white hover:bg-blue-500 ${
-                !allocOk ? "opacity-60 cursor-not-allowed" : ""
-              }`}
-            >
-              Save allocations
-            </Button>
-            <Button onClick={() => location.reload()}>Recalculate</Button>
-            <Button
-              onClick={async () => {
-                if (!clientId) return;
-                if (customAccounts.length >= CUSTOM_ACCOUNT_LIMIT) {
-                  alert(`Custom account limit of ${CUSTOM_ACCOUNT_LIMIT} reached.`);
-                  return;
-                }
-                const name = prompt("Add PF account (example: Vault Reserve)");
-                if (!name) return;
-                const slug = toSlug(name);
-                const { error } = await supabase.from("pf_accounts").insert({
-                  client_id: clientId,
-                  slug,
-                  name,
-                  sort_order: 100,
-                  color: "#8b5cf6",
-                });
-                if (error) return alert("Could not add account. Check RLS.");
-                const { data: paf } = await supabase
-                  .from("pf_accounts")
-                  .select("slug, name, color, sort_order")
-                  .eq("client_id", clientId)
-                  .order("sort_order", { ascending: true })
-                  .order("name", { ascending: true });
-                setAccounts((paf ?? []) as PFAccount[]);
-                setAlloc((p) => ({ ...p, [slug]: 0 }));
-              }}
-            >
-              + Add account
-            </Button>
-          </div>
-          </Card>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card title="Allocation cadence">
-            <div className="space-y-4 text-sm text-slate-600">
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cadence</span>
-                <select
-                  value={allocationSettings.cadence}
-                  onChange={(e) =>
-                    setAllocationSettings((prev) => ({
-                      ...prev,
-                      cadence: e.target.value as typeof allocationSettings.cadence,
-                    }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2"
-                >
-                  <option value="weekly">Weekly</option>
-                  <option value="semi_monthly">10th & 25th</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </label>
-              {allocationSettings.cadence === "weekly" && (
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Day of week</span>
-                  <select
-                    value={allocationSettings.weekDay}
-                    onChange={(e) =>
-                      setAllocationSettings((prev) => ({ ...prev, weekDay: e.target.value }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  >
-                    {[
-                      "monday",
-                      "tuesday",
-                      "wednesday",
-                      "thursday",
-                      "friday",
-                      "saturday",
-                      "sunday",
-                    ].map((day) => (
-                      <option key={day} value={day}>
-                        {capitalize(day)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {allocationSettings.cadence === "semi_monthly" && (
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">First day</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={allocationSettings.semiMonthlyDays[0] ?? 10}
-                      onChange={(e) =>
-                        setAllocationSettings((prev) => ({
-                          ...prev,
-                          semiMonthlyDays: [Number(e.target.value), prev.semiMonthlyDays[1] ?? 25],
-                        }))
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Second day</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={allocationSettings.semiMonthlyDays[1] ?? 25}
-                      onChange={(e) =>
-                        setAllocationSettings((prev) => ({
-                          ...prev,
-                          semiMonthlyDays: [prev.semiMonthlyDays[0] ?? 10, Number(e.target.value)],
-                        }))
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                </div>
-              )}
-              {allocationSettings.cadence === "monthly" && (
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Day of month</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={31}
-                    value={allocationSettings.monthlyDay}
-                    onChange={(e) =>
-                      setAllocationSettings((prev) => ({ ...prev, monthlyDay: Number(e.target.value) }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-              )}
-              <p className="text-xs text-slate-500">
-                Allocations pull from projected real revenue on the selected cadence using current target percentages.
-              </p>
-            </div>
-          </Card>
-
-          <Card title="Rollout plan">
-            <p className="text-sm text-slate-600">
-              Transition clients from their current allocation mix to targets over {rolloutPlan.quarters} quarter(s).
-            </p>
-            <input
-              type="range"
-              min={1}
-              max={8}
-              value={rolloutPlan.quarters}
-              onChange={(e) => setRolloutPlan({ quarters: Number(e.target.value) })}
-              className="mt-4 w-full"
-            />
-            <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-              <span>Faster</span>
-              <span>More gradual</span>
-            </div>
-            <p className="mt-3 text-xs text-slate-500">
-              The system will update current allocations each quarter to meet targets within the selected timeline.
-            </p>
-          </Card>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card title="Profit distribution plan">
-            <div className="space-y-4 text-sm text-slate-600">
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bonus payout %</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round(profitSettings.bonusPct * 100)}
-                  onChange={(e) =>
-                    setProfitSettings((prev) => ({ ...prev, bonusPct: Number(e.target.value) / 100 }))
-                  }
-                />
-                <span className="text-xs text-slate-500">{Math.round(profitSettings.bonusPct * 100)}% of profit balance paid as owner bonus.</span>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Vault allocation %</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round(profitSettings.vaultPct * 100)}
-                  onChange={(e) =>
-                    setProfitSettings((prev) => ({ ...prev, vaultPct: Number(e.target.value) / 100 }))
-                  }
-                />
-                <span className="text-xs text-slate-500">
-                  {Math.round(profitSettings.vaultPct * 100)}% of the remaining balance transfers to Vault each quarter.
-                </span>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next distribution</span>
-                <input
-                  type="date"
-                  value={profitSettings.nextDistribution}
-                  onChange={(e) => setProfitSettings((prev) => ({ ...prev, nextDistribution: e.target.value }))}
-                  className="rounded-lg border border-slate-300 px-3 py-2"
-                />
-              </label>
-              <p className="text-xs text-slate-500">
-                Next distribution scheduled for {profitDistributionLabel}. Future distributions occur every 3 months until updated.
-              </p>
-            </div>
-          </Card>
-
-          <Card title="Tax strategy">
-            <div className="space-y-4 text-sm text-slate-600">
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                  <input
-                    type="radio"
-                    name="tax-mode"
-                    value="calculation"
-                    checked={taxSettings.mode === "calculation"}
-                    onChange={(e) =>
-                      setTaxSettings((prev) => ({ ...prev, mode: e.target.value as "calculation" | "flat" }))
-                    }
-                  />
-                  Calculation
-                </label>
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                  <input
-                    type="radio"
-                    name="tax-mode"
-                    value="flat"
-                    checked={taxSettings.mode === "flat"}
-                    onChange={(e) =>
-                      setTaxSettings((prev) => ({ ...prev, mode: e.target.value as "calculation" | "flat" }))
-                    }
-                  />
-                  Flat estimate
-                </label>
-              </div>
-
-              {taxSettings.mode === "calculation" ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estimated tax rate %</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={0.5}
-                      value={taxSettings.taxRate * 100}
-                      onChange={(e) =>
-                        setTaxSettings((prev) => ({ ...prev, taxRate: Number(e.target.value) / 100 }))
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Taxes already paid ($)</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={taxSettings.estimatedPaid}
-                      onChange={(e) =>
-                        setTaxSettings((prev) => ({ ...prev, estimatedPaid: Number(e.target.value) }))
-                      }
-                      className="rounded-lg border border-slate-300 px-3 py-2"
-                    />
-                  </label>
-                </div>
-              ) : (
-                <label className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Annual tax estimate ($)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={taxSettings.flatAmount}
-                    onChange={(e) =>
-                      setTaxSettings((prev) => ({ ...prev, flatAmount: Number(e.target.value) }))
-                    }
-                    className="rounded-lg border border-slate-300 px-3 py-2"
-                  />
-                </label>
-              )}
-
-              <label className="flex flex-col gap-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Vault sweep of excess %</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={Math.round(taxSettings.vaultPct * 100)}
-                  onChange={(e) =>
-                    setTaxSettings((prev) => ({ ...prev, vaultPct: Number(e.target.value) / 100 }))
-                  }
-                  className="rounded-lg border border-slate-300 px-3 py-2"
-                />
-              </label>
-              <p className="text-xs text-slate-500">
-                Estimated payments occur on 4/15, 6/15, 9/15, and 1/15 (prior year true-up). Excess balances can flow to Vault based on your selection.
-              </p>
-            </div>
-          </Card>
         </div>
       </div>
-
       {/* drill panel */}
       {drill && (
         <div className="fixed inset-0 z-40 flex items-center justify-center px-4 py-6">
@@ -1231,45 +924,6 @@ export default function Page() {
 }
 
 // -------- helper components / functions --------
-function describeAllocationCadence(settings: {
-  cadence: "weekly" | "semi_monthly" | "monthly";
-  weekDay: string;
-  semiMonthlyDays: number[];
-  monthlyDay: number;
-}) {
-  switch (settings.cadence) {
-    case "weekly": {
-      const label = capitalize(settings.weekDay);
-      return `Weekly on ${label}`;
-    }
-    case "semi_monthly": {
-      const [first, second] = settings.semiMonthlyDays;
-      return `10/25 cadence on ${ordinal(first)} & ${ordinal(second || first)}`;
-    }
-    case "monthly":
-    default:
-      return `Monthly on the ${ordinal(settings.monthlyDay)}`;
-  }
-}
-
-function formatLongDate(value?: string) {
-  if (!value) return "—";
-  const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return value;
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function capitalize(input: string) {
-  if (!input) return "";
-  return input.charAt(0).toUpperCase() + input.slice(1);
-}
-
-function ordinal(n: number) {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
-}
-
 function buildWeeklyPeriods(startYM: string, count: number): Period[] {
   const [y, m] = startYM.split("-").map(Number);
   const base = new Date(y, (m ?? 1) - 1, 1);

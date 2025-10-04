@@ -14,6 +14,9 @@ Profit First cash flow forecast dashboard powered by Next.js and Supabase.
    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
    ```
 3. Apply the database schema found in [`docs/supabase-schema.sql`](docs/supabase-schema.sql) to your Supabase project. The schema creates the tables and views that the dashboard reads, such as `clients`, `pf_accounts`, allocation targets, and the monthly balance/activity views used throughout the UI.
+4. (Optional) Load the sample fixtures in [`docs/supabase-test-fixtures.sql`](docs/supabase-test-fixtures.sql) to validate the end-to-end Supabase connection with representative data before wiring in your production sources.
+
+See [the Supabase sync checklist](docs/supabase-sync-guide.md) for a step-by-step walkthrough on verifying that the database and every page in the app can exchange data with Supabase.
 4. Start the development server
    ```bash
    npm run dev

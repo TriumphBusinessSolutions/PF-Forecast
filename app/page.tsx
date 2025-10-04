@@ -61,8 +61,6 @@ const toSlug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
 const supabase = getSupabaseClient();
-const SUPABASE_ENV_MESSAGE =
-  "Supabase environment variables are not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to use the dashboard.";
 
 // ------------------ types ------------------
 type ClientRow = { id: string; name: string };

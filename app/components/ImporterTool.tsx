@@ -15,6 +15,20 @@ const BUILT_IN_MAIN_ACCOUNT_NAMES = [
   'Tax',
 ];
 
+const SUGGESTION_RULES: { test: RegExp; slug: string; kind?: 'inflow' | 'outflow' }[] = [
+  { test: /(income|revenue|sales|fees|receipt|deposit)/i, slug: slugify('Income'), kind: 'inflow' },
+  { test: /(material|inventory|cogs|cost of goods|suppl(ies|y)|parts?)/i, slug: slugify('Materials'), kind: 'outflow' },
+  { test: /(labor|payroll|wages|contractor|subcontract|technician|crew|staff)/i, slug: slugify('Direct Labor'), kind: 'outflow' },
+  { test: /(owner|member|partner|draw|distribution|equity)/i, slug: slugify("Owner's Pay"), kind: 'outflow' },
+  { test: /(tax|irs)/i, slug: slugify('Tax') },
+  { test: /(profit|retained)/i, slug: slugify('Profit'), kind: 'inflow' },
+  {
+    test: /(rent|utilit|insurance|office|subscription|software|marketing|travel|expense|maintenance|suppl(ies|y))/i,
+    slug: slugify('Operating Expenses'),
+    kind: 'outflow',
+  },
+];
+
 type ParsedRow = {
   name: string;
   monthly: Record<string, number>;
@@ -50,11 +64,11 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
   const [futureCount, setFutureCount] = useState<number>(6);
   const [projectionOverrides, setProjectionOverrides] = useState<Record<string, number>>({});
   const [accountOptions, setAccountOptions] = useState<PFAccount[]>(() =>
-    mergeAccountLists(buildDefaultAccounts(), accounts)
+    mergeAccountLists(accounts, buildDefaultAccounts())
   );
 
   useEffect(() => {
-    setAccountOptions((prev) => mergeAccountLists(prev, buildDefaultAccounts(), accounts));
+    setAccountOptions((prev) => mergeAccountLists(accounts, prev, buildDefaultAccounts()));
   }, [accounts]);
 
   const parseAndSet = useCallback(
@@ -86,8 +100,13 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     statement.rows.forEach((row) => {
       const def = row.total >= 0 ? 'inflow' : 'outflow';
       nextKinds[row.name] = def;
+      const suggestion = suggestAccountSlug(row.name, def, accountOptions);
+      if (suggestion) {
+        nextAssignments[row.name] = suggestion;
+        return;
+      }
       if (accountOptions.length) {
-        // Heuristic: inflows map to Income if present, outflows to Operating if present
+        // Heuristic fallback: inflows map to Income if present, outflows to Operating if present
         nextAssignments[row.name] = def === 'inflow'
           ? income?.slug ?? accountOptions[0]?.slug ?? ''
           : operating?.slug ?? accountOptions[0]?.slug ?? '';
@@ -98,7 +117,7 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     setAssignments(nextAssignments);
     setKinds(nextKinds);
     setProjectionOverrides({});
-  }, [statement]);
+  }, [statement, accountOptions]);
 
   const handleParse = () => {
     parseAndSet(rawInput);
@@ -314,6 +333,11 @@ function AssignmentTable({
               <th className="px-3 py-2 text-left font-semibold">Account</th>
               <th className="px-3 py-2 text-left font-semibold">Type</th>
               <th className="px-3 py-2 text-left font-semibold">Assign to</th>
+              {statement.months.map((ym) => (
+                <th key={ym} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
+                  {formatMonth(ym)}
+                </th>
+              ))}
               <th className="px-3 py-2 text-right font-semibold">12 mo total</th>
             </tr>
           </thead>
@@ -361,6 +385,11 @@ function AssignmentTable({
                       <option value={CREATE_NEW_ACCOUNT_VALUE}>+ Create new main account</option>
                     </select>
                   </td>
+                  {statement.months.map((ym) => (
+                    <td key={ym} className="px-3 py-2 text-right">
+                      {formatMoney(normaliseValue(row.monthly[ym], kind))}
+                    </td>
+                  ))}
                   <td className="px-3 py-2 text-right font-medium">
                     {formatMoney(total)}
                   </td>
@@ -527,17 +556,23 @@ function buildDefaultAccounts(): PFAccount[] {
 }
 
 function mergeAccountLists(...lists: (PFAccount[] | undefined)[]): PFAccount[] {
-  const map = new Map<string, PFAccount>();
+  const result: PFAccount[] = [];
+  const seenByCanonical = new Set<string>();
+  const seenBySlug = new Set<string>();
   lists.forEach((list) => {
     (list ?? []).forEach((acc) => {
       const normalised = normaliseAccount(acc);
       if (!normalised) return;
-      if (!map.has(normalised.slug)) {
-        map.set(normalised.slug, normalised);
+      const canonical = canonicalName(normalised.name);
+      if (seenByCanonical.has(canonical) || seenBySlug.has(normalised.slug)) {
+        return;
       }
+      result.push(normalised);
+      seenByCanonical.add(canonical);
+      seenBySlug.add(normalised.slug);
     });
   });
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function normaliseAccount(acc: PFAccount): PFAccount | null {
@@ -555,6 +590,16 @@ function slugify(value: string): string {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .replace(/_+/g, '_');
+}
+
+function canonicalName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b([a-z]+) s\b/g, '$1s')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function ensureUniqueSlug(base: string, existing: PFAccount[]): string {
@@ -650,12 +695,17 @@ function parseStatement(raw: string): ParsedStatement {
     parts.slice(1).forEach((value, idx) => {
       const month = monthHeaders[idx];
       if (!month) return;
+      if (!limitedMonths.includes(month)) return;
       const num = parseCurrency(value);
       if (!Number.isFinite(num)) return;
       monthly[month] = num;
     });
 
     if (Object.keys(monthly).length === 0) {
+      return;
+    }
+
+    if (isAggregateRow(name)) {
       return;
     }
 
@@ -752,6 +802,20 @@ function normaliseValue(value: number | undefined, kind: 'inflow' | 'outflow'): 
   return kind === 'outflow' ? -abs : abs;
 }
 
+function isAggregateRow(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return true;
+  if (/^total\b/.test(normalized)) return true;
+  if (/(net|gross) (income|profit|loss)/.test(normalized)) return true;
+  if (/operating (income|profit)/.test(normalized)) return true;
+  if (/^income total$/.test(normalized)) return true;
+  if (/^expense(s)? total$/.test(normalized)) return true;
+  if (/^total other (income|expense)/.test(normalized)) return true;
+  if (/^total expenses$/.test(normalized)) return true;
+  if (/^total operating expenses$/.test(normalized)) return true;
+  return false;
+}
+
 function monthSort(ym: string): number {
   const [y, m] = ym.split('-').map(Number);
   return y * 12 + (m - 1);
@@ -797,6 +861,36 @@ function trendSeries(values: number[], future: number): number[] {
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value || 0);
+}
+
+function suggestAccountSlug(
+  rowName: string,
+  kind: 'inflow' | 'outflow',
+  options: PFAccount[]
+): string | undefined {
+  const lower = rowName.toLowerCase();
+  for (const rule of SUGGESTION_RULES) {
+    if (rule.kind && rule.kind !== kind) continue;
+    if (rule.test.test(lower)) {
+      const match = resolveSuggestedSlug(rule.slug, options);
+      if (match) return match;
+    }
+  }
+  return undefined;
+}
+
+function resolveSuggestedSlug(preferredSlug: string, options: PFAccount[]): string | undefined {
+  const canonicalPreferred = canonicalName(preferredSlug);
+  for (const option of options) {
+    if (option.slug === preferredSlug) return option.slug;
+  }
+  for (const option of options) {
+    if (canonicalName(option.slug) === canonicalPreferred) return option.slug;
+  }
+  for (const option of options) {
+    if (canonicalName(option.name) === canonicalPreferred) return option.slug;
+  }
+  return undefined;
 }
 
 function formatMonth(ym: string): string {

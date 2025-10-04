@@ -30,5 +30,6 @@ The UI reads and writes to several Supabase tables:
 - `v_monthly_activity_long` – view returning monthly net activity per Profit First account.【F:app/page.tsx†L234-L241】【F:app/page.tsx†L272-L323】
 - `v_pf_balances_long` – view returning month-end balances per Profit First account.【F:app/page.tsx†L239-L241】【F:app/page.tsx†L296-L338】
 - `v_proj_occurrences` – view powering the inflow/outflow breakdown in the drill-down panel.【F:app/page.tsx†L404-L419】【F:app/page.tsx†L1384-L1426】
+- `pf_custom_projections` – captures custom inflow/outflow adjustments created from the account drill-down and keeps them in sync with Supabase.【F:app/page.tsx†L234-L241】【F:app/page.tsx†L642-L708】【F:app/page.tsx†L683-L721】【F:docs/supabase-schema.sql†L79-L108】
 
 Use the provided SQL file as a starting point and adapt it to match your production data sources (e.g., syncs from an accounting ledger). Configure row level security policies in Supabase to scope each table to the authenticated client owner before going live.

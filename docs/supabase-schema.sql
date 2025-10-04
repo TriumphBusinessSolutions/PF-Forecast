@@ -118,6 +118,43 @@ create table if not exists public.pf_projected_occurrences (
 
 comment on table public.pf_projected_occurrences is 'Projected ledger occurrences supporting account drill-down inflow/outflow breakdowns.';
 
+-- Custom projection overrides entered from the dashboard
+create table if not exists public.pf_custom_projections (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  pf_slug text not null,
+  period text not null,
+  granularity text not null check (granularity in ('monthly', 'weekly')),
+  name text not null,
+  amount numeric not null check (amount >= 0),
+  direction text not null check (direction in ('inflow', 'outflow')),
+  frequency text,
+  escalation text,
+  escalation_value numeric,
+  start_date date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint pf_custom_projections_pf_accounts_fk
+    foreign key (client_id, pf_slug)
+    references public.pf_accounts (client_id, slug)
+    on delete cascade
+);
+
+create or replace function public.touch_pf_custom_projections_updated_at()
+returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_touch_pf_custom_projections_updated_at on public.pf_custom_projections;
+create trigger trg_touch_pf_custom_projections_updated_at
+before update on public.pf_custom_projections
+for each row execute function public.touch_pf_custom_projections_updated_at();
+
+comment on table public.pf_custom_projections is 'User-entered inflow/outflow overrides captured from the dashboard experience.';
+
 -- Views consumed directly by the Next.js dashboard -------------------------
 create or replace view public.v_monthly_activity_long as
 select client_id, ym, pf_slug, net_amount

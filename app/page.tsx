@@ -85,6 +85,21 @@ type FrequencyOption = "daily" | "weekly" | "monthly" | "annual" | "custom";
 
 type CustomProjection = {
   id: string;
+  clientId: string;
+  slug: string;
+  period: string;
+  granularity: "monthly" | "weekly";
+  name: string;
+  amount: number;
+  direction: "inflow" | "outflow";
+  frequency: FrequencyOption;
+  escalation: "standard" | "custom";
+  escalationValue: number;
+  startDate: string;
+  createdAt?: string;
+};
+
+type CustomProjectionPayload = {
   slug: string;
   period: string;
   granularity: "monthly" | "weekly";
@@ -223,6 +238,7 @@ export default function Page() {
     setActivity([]);
     setBalances([]);
     setMonths([]);
+    setCustomProjections([]);
 
     (async () => {
       try {
@@ -288,10 +304,37 @@ export default function Page() {
         if (cancelled) return;
         if (balanceError) throw balanceError;
 
+        const { data: customRows, error: customError } = await client
+          .from("pf_custom_projections")
+          .select(
+            "id, client_id, pf_slug, period, granularity, name, amount, direction, frequency, escalation, escalation_value, start_date, created_at"
+          )
+          .eq("client_id", clientId)
+          .order("created_at", { ascending: true });
+        if (cancelled) return;
+        if (customError) throw customError;
+
         const allMonths = Array.from(new Set((act ?? []).map((r: any) => r.ym)));
         setMonths(filterMonths(allMonths, startMonth, horizon));
         setActivity((act ?? []) as ActLong[]);
         setBalances((bal ?? []) as BalLong[]);
+        setCustomProjections(
+          (customRows ?? []).map((row: any) => ({
+            id: row.id,
+            clientId: row.client_id,
+            slug: row.pf_slug,
+            period: row.period,
+            granularity: row.granularity,
+            name: row.name,
+            amount: Number(row.amount ?? 0),
+            direction: row.direction,
+            frequency: row.frequency ?? "monthly",
+            escalation: row.escalation ?? "standard",
+            escalationValue: Number(row.escalation_value ?? 0),
+            startDate: row.start_date ?? "",
+            createdAt: row.created_at,
+          }))
+        );
         setDataError(null);
       } catch (err) {
         if (cancelled) return;
@@ -345,16 +388,44 @@ export default function Page() {
     return m;
   }, [balances]);
 
+  const customAdjustmentsByMonth = useMemo(() => {
+    return groupCustomAdjustments(customProjections, (entry) =>
+      entry.granularity === "monthly" ? entry.period : entry.period.slice(0, 7)
+    );
+  }, [customProjections]);
+
+  const customAdjustmentsByWeek = useMemo(() => {
+    return groupCustomAdjustments(
+      customProjections.filter((entry) => entry.granularity === "weekly"),
+      (entry) => entry.period
+    );
+  }, [customProjections]);
+
+  const customWeeklyTotalsByMonth = useMemo(() => {
+    return groupCustomAdjustments(
+      customProjections.filter((entry) => entry.granularity === "weekly"),
+      (entry) => entry.period.slice(0, 7)
+    );
+  }, [customProjections]);
+
   const sumDirectCostsBalance = useCallback(
     (ym: string) =>
-      DIRECT_COST_SLUGS.reduce((sum, slug) => sum + (balByMonth.get(ym)?.[slug] || 0), 0),
-    [balByMonth]
+      DIRECT_COST_SLUGS.reduce((sum, slug) => {
+        const base = balByMonth.get(ym)?.[slug] || 0;
+        const custom = customAdjustmentsByMonth.get(ym)?.[slug] || 0;
+        return sum + base + custom;
+      }, 0),
+    [balByMonth, customAdjustmentsByMonth]
   );
 
   const sumDirectCostsActivity = useCallback(
     (ym: string) =>
-      DIRECT_COST_SLUGS.reduce((sum, slug) => sum + (actByMonth.get(ym)?.[slug] || 0), 0),
-    [actByMonth]
+      DIRECT_COST_SLUGS.reduce((sum, slug) => {
+        const base = actByMonth.get(ym)?.[slug] || 0;
+        const custom = customAdjustmentsByMonth.get(ym)?.[slug] || 0;
+        return sum + base + custom;
+      }, 0),
+    [actByMonth, customAdjustmentsByMonth]
   );
 
   const monthlyBalanceForSlug = useCallback(
@@ -368,9 +439,11 @@ export default function Page() {
         const direct = monthlyBalanceForSlug(ym, "direct_costs_total");
         return income - direct;
       }
-      return balByMonth.get(ym)?.[slug] || 0;
+      const base = balByMonth.get(ym)?.[slug] || 0;
+      const custom = customAdjustmentsByMonth.get(ym)?.[slug] || 0;
+      return base + custom;
     },
-    [balByMonth, sumDirectCostsBalance]
+    [balByMonth, customAdjustmentsByMonth, sumDirectCostsBalance]
   );
 
   const monthlyActivityForSlug = useCallback(
@@ -384,9 +457,11 @@ export default function Page() {
         const direct = monthlyActivityForSlug(ym, "direct_costs_total");
         return income - direct;
       }
-      return actByMonth.get(ym)?.[slug] || 0;
+      const base = actByMonth.get(ym)?.[slug] || 0;
+      const custom = customAdjustmentsByMonth.get(ym)?.[slug] || 0;
+      return base + custom;
     },
-    [actByMonth, sumDirectCostsActivity]
+    [actByMonth, customAdjustmentsByMonth, sumDirectCostsActivity]
   );
 
   const pfAccountMap = useMemo(() => {
@@ -435,25 +510,194 @@ export default function Page() {
     return buildWeeklyPeriods(startMonth, horizon);
   }, [granularity, months, startMonth, horizon]);
 
+  const weeksByMonth = useMemo(() => {
+    if (granularity !== "weekly") {
+      return new Map<string, Period[]>();
+    }
+    const grouped = new Map<string, Period[]>();
+    periods.forEach((p) => {
+      if (!grouped.has(p.month)) {
+        grouped.set(p.month, []);
+      }
+      grouped.get(p.month)!.push(p);
+    });
+    grouped.forEach((list, key) => {
+      list.sort((a, b) => new Date(a.key).getTime() - new Date(b.key).getTime());
+      grouped.set(key, list);
+    });
+    return grouped;
+  }, [granularity, periods]);
+
   const chartData = useMemo(() => {
     return periods.map((period) => {
       const ym = period.month;
       const d: Record<string, any> = { period: period.key, label: period.label };
       let total = 0;
       displayAccounts.forEach((acc) => {
-        const ending = monthlyBalanceForSlug(ym, acc.slug);
-        const net = monthlyActivityForSlug(ym, acc.slug);
-        const value =
-          granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
-            ? estimateWeeklyBalance(ending, net, period.weekIndex, period.weeksInMonth)
-            : ending;
-        d[acc.name] = value;
-        total += value;
+        if (granularity === "weekly" && period.weekIndex !== undefined) {
+          const monthWeeks = weeksByMonth.get(ym) ?? [];
+          const weeksInMonth = monthWeeks.length || period.weeksInMonth || 1;
+          const monthEnding = monthlyBalanceForSlug(ym, acc.slug);
+          const monthNet = monthlyActivityForSlug(ym, acc.slug);
+          const weeklyTotals = customWeeklyTotalsByMonth.get(ym)?.[acc.slug] ?? 0;
+          const baseNetWithoutWeekly = monthNet - weeklyTotals;
+          const baseIncrement = weeksInMonth ? baseNetWithoutWeekly / weeksInMonth : 0;
+          const beginning = monthEnding - monthNet;
+          let running = beginning;
+          for (let idx = 0; idx <= (period.weekIndex ?? 0); idx++) {
+            running += baseIncrement;
+            const weekPeriod = monthWeeks[idx];
+            if (weekPeriod) {
+              const adjust = customAdjustmentsByWeek.get(weekPeriod.key)?.[acc.slug] ?? 0;
+              running += adjust;
+            }
+          }
+          d[acc.name] = running;
+          total += running;
+        } else {
+          const ending = monthlyBalanceForSlug(ym, acc.slug);
+          d[acc.name] = ending;
+          total += ending;
+        }
       });
       d.Total = total;
       return d;
     });
-  }, [periods, displayAccounts, monthlyBalanceForSlug, monthlyActivityForSlug, granularity]);
+  }, [
+    periods,
+    displayAccounts,
+    monthlyBalanceForSlug,
+    monthlyActivityForSlug,
+    granularity,
+    weeksByMonth,
+    customAdjustmentsByWeek,
+    customWeeklyTotalsByMonth,
+  ]);
+
+  const endingForPeriod = useCallback(
+    (period: Period, slug: string) => {
+      if (granularity === "weekly" && period.weekIndex !== undefined) {
+        const monthWeeks = weeksByMonth.get(period.month) ?? [];
+        const weeksInMonth = monthWeeks.length || period.weeksInMonth || 1;
+        const monthEnding = monthlyBalanceForSlug(period.month, slug);
+        const monthNet = monthlyActivityForSlug(period.month, slug);
+        const weeklyTotals = customWeeklyTotalsByMonth.get(period.month)?.[slug] ?? 0;
+        const baseNetWithoutWeekly = monthNet - weeklyTotals;
+        const baseIncrement = weeksInMonth ? baseNetWithoutWeekly / weeksInMonth : 0;
+        const beginning = monthEnding - monthNet;
+        let running = beginning;
+        for (let idx = 0; idx <= (period.weekIndex ?? 0); idx++) {
+          running += baseIncrement;
+          const weekPeriod = monthWeeks[idx];
+          if (weekPeriod) {
+            const adjust = customAdjustmentsByWeek.get(weekPeriod.key)?.[slug] ?? 0;
+            running += adjust;
+          }
+        }
+        return running;
+      }
+      return monthlyBalanceForSlug(period.month, slug);
+    },
+    [
+      granularity,
+      weeksByMonth,
+      monthlyBalanceForSlug,
+      monthlyActivityForSlug,
+      customAdjustmentsByWeek,
+      customWeeklyTotalsByMonth,
+    ]
+  );
+
+  const netForPeriod = useCallback(
+    (period: Period, slug: string) => {
+      if (granularity === "weekly" && period.weekIndex !== undefined) {
+        const monthWeeks = weeksByMonth.get(period.month) ?? [];
+        const weeksInMonth = monthWeeks.length || period.weeksInMonth || 1;
+        const monthNet = monthlyActivityForSlug(period.month, slug);
+        const weeklyTotals = customWeeklyTotalsByMonth.get(period.month)?.[slug] ?? 0;
+        const baseNetWithoutWeekly = monthNet - weeklyTotals;
+        const baseIncrement = weeksInMonth ? baseNetWithoutWeekly / weeksInMonth : 0;
+        const weeklyAdjust = customAdjustmentsByWeek.get(period.key)?.[slug] ?? 0;
+        return baseIncrement + weeklyAdjust;
+      }
+      return monthlyActivityForSlug(period.month, slug);
+    },
+    [
+      granularity,
+      weeksByMonth,
+      monthlyActivityForSlug,
+      customAdjustmentsByWeek,
+      customWeeklyTotalsByMonth,
+    ]
+  );
+
+  const handleAddCustomProjection = useCallback(
+    async (payload: CustomProjectionPayload) => {
+      if (!clientId) {
+        throw new Error("Select a client before adding custom projections.");
+      }
+      if (!supabase) {
+        throw new Error("Supabase is not configured.");
+      }
+      const insertPayload = {
+        client_id: clientId,
+        pf_slug: payload.slug,
+        period: payload.period,
+        granularity: payload.granularity,
+        name: payload.name,
+        amount: payload.amount,
+        direction: payload.direction,
+        frequency: payload.frequency,
+        escalation: payload.escalation,
+        escalation_value: payload.escalationValue,
+        start_date: payload.startDate || null,
+      };
+      const { data, error } = await supabase
+        .from("pf_custom_projections")
+        .insert(insertPayload)
+        .select()
+        .single();
+      if (error) throw error;
+      setCustomProjections((prev) => [
+        ...prev,
+        {
+          id: data.id,
+          clientId: data.client_id,
+          slug: data.pf_slug,
+          period: data.period,
+          granularity: data.granularity,
+          name: data.name,
+          amount: Number(data.amount ?? 0),
+          direction: data.direction,
+          frequency: data.frequency ?? "monthly",
+          escalation: data.escalation ?? "standard",
+          escalationValue: Number(data.escalation_value ?? 0),
+          startDate: data.start_date ?? "",
+          createdAt: data.created_at,
+        },
+      ]);
+    },
+    [clientId]
+  );
+
+  const handleRemoveCustomProjection = useCallback(
+    async (id: string) => {
+      if (!clientId) {
+        throw new Error("Select a client before modifying projections.");
+      }
+      if (!supabase) {
+        throw new Error("Supabase is not configured.");
+      }
+      const { error } = await supabase
+        .from("pf_custom_projections")
+        .delete()
+        .eq("id", id)
+        .eq("client_id", clientId);
+      if (error) throw error;
+      setCustomProjections((prev) => prev.filter((item) => item.id !== id));
+    },
+    [clientId]
+  );
 
   // ------------ drill ------------
   function openDrill(slug: string, period: Period) {
@@ -507,33 +751,13 @@ export default function Page() {
   const finalPeriod = periods[periods.length - 1];
   const describePeriodValue = (period?: Period) => {
     if (!period) return 0;
-    return displayAccounts.reduce((sum, acc) => {
-      const ending = monthlyBalanceForSlug(period.month, acc.slug);
-      const net = monthlyActivityForSlug(period.month, acc.slug);
-      const value =
-        granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
-          ? estimateWeeklyBalance(ending, net, period.weekIndex, period.weeksInMonth)
-          : ending;
-      return sum + value;
-    }, 0);
+    return displayAccounts.reduce((sum, acc) => sum + endingForPeriod(period, acc.slug), 0);
   };
   const currentTotalBalance = describePeriodValue(currentPeriod);
   const endingTotalBalance = describePeriodValue(finalPeriod);
   const projectedChange = endingTotalBalance - currentTotalBalance;
-  const realRevenueProjection = periods.reduce((sum, period) => {
-    const net = monthlyActivityForSlug(period.month, "real_revenue");
-    if (granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth) {
-      return sum + net / (period.weeksInMonth || 1);
-    }
-    return sum + net;
-  }, 0);
-  const directCostProjection = periods.reduce((sum, period) => {
-    const cost = monthlyActivityForSlug(period.month, "direct_costs_total");
-    if (granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth) {
-      return sum + cost / (period.weeksInMonth || 1);
-    }
-    return sum + cost;
-  }, 0);
+  const realRevenueProjection = periods.reduce((sum, period) => sum + netForPeriod(period, "real_revenue"), 0);
+  const directCostProjection = periods.reduce((sum, period) => sum + netForPeriod(period, "direct_costs_total"), 0);
   const getAccountColor = useCallback(
     (slug: string) => displayAccounts.find((a) => a.slug === slug)?.color || "#64748b",
     [displayAccounts]
@@ -566,9 +790,6 @@ export default function Page() {
           rel="stylesheet"
         />
       </Head>
-      <style jsx global>{`
-        html, body { font-family: Rubik, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-      `}</style>
 
       <div className="flex min-h-screen flex-col">
         <header className="border-b border-slate-200 bg-white/80 backdrop-blur">
@@ -902,12 +1123,7 @@ export default function Page() {
                                 </div>
                               </td>
                               {periods.map((period) => {
-                                const ending = monthlyBalanceForSlug(period.month, acc.slug);
-                                const net = monthlyActivityForSlug(period.month, acc.slug);
-                                const value =
-                                  granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
-                                    ? estimateWeeklyBalance(ending, net, period.weekIndex, period.weeksInMonth)
-                                    : ending;
+                                const value = endingForPeriod(period, acc.slug);
                                 return (
                                   <td
                                     key={period.key}
@@ -952,11 +1168,7 @@ export default function Page() {
                             <tr key={acc.slug} className="bg-white hover:bg-blue-50/60">
                               <td className="sticky left-0 z-10 bg-white px-4 py-3 text-sm font-medium text-slate-800">{acc.name}</td>
                               {periods.map((period) => {
-                                const net = monthlyActivityForSlug(period.month, acc.slug);
-                                const value =
-                                  granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
-                                    ? net / (period.weeksInMonth || 1)
-                                    : net;
+                                const value = netForPeriod(period, acc.slug);
                                 return (
                                   <td
                                     key={period.key}
@@ -1116,7 +1328,8 @@ export default function Page() {
                 drill={drill}
                 occ={occ}
                 customProjections={customProjections}
-                setCustomProjections={setCustomProjections}
+                onAddCustom={handleAddCustomProjection}
+                onRemoveCustom={handleRemoveCustomProjection}
                 monthlyBalanceForSlug={monthlyBalanceForSlug}
                 monthlyActivityForSlug={monthlyActivityForSlug}
               />
@@ -1190,12 +1403,31 @@ function filterMonths(all: string[], startYM: string, horizon: number) {
   return targetList.map((d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
 }
 
+function groupCustomAdjustments(
+  entries: CustomProjection[],
+  keyFn: (entry: CustomProjection) => string | null | undefined
+) {
+  const map = new Map<string, Record<string, number>>();
+  entries.forEach((entry) => {
+    const key = keyFn(entry);
+    if (!key) return;
+    if (!map.has(key)) {
+      map.set(key, {});
+    }
+    const bucket = map.get(key)!;
+    const delta = entry.direction === "inflow" ? entry.amount : -entry.amount;
+    bucket[entry.slug] = (bucket[entry.slug] || 0) + delta;
+  });
+  return map;
+}
+
 function AccountDetailPanel({
   account,
   drill,
   occ,
   customProjections,
-  setCustomProjections,
+  onAddCustom,
+  onRemoveCustom,
   monthlyBalanceForSlug,
   monthlyActivityForSlug,
 }: {
@@ -1211,7 +1443,8 @@ function AccountDetailPanel({
   };
   occ: OccRow[];
   customProjections: CustomProjection[];
-  setCustomProjections: React.Dispatch<React.SetStateAction<CustomProjection[]>>;
+  onAddCustom: (payload: CustomProjectionPayload) => Promise<void>;
+  onRemoveCustom: (id: string) => Promise<void>;
   monthlyBalanceForSlug: (ym: string, slug: string) => number;
   monthlyActivityForSlug: (ym: string, slug: string) => number;
 }) {
@@ -1232,6 +1465,8 @@ function AccountDetailPanel({
     escalationValue: 0,
     startDate: drill.granularity === "monthly" ? `${drill.month}-01` : drill.period,
   }));
+  const [isSavingCustom, setIsSavingCustom] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   useEffect(() => {
     setNewItem((prev) => ({
@@ -1328,7 +1563,7 @@ function AccountDetailPanel({
     }
   };
 
-  const handleAddCustom = () => {
+  const handleAddCustom = async () => {
     if (!newItem.name.trim()) {
       alert("Please name the custom flow.");
       return;
@@ -1337,9 +1572,7 @@ function AccountDetailPanel({
       alert("Amount must be greater than zero.");
       return;
     }
-    const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `custom-${Date.now()}`;
-    const entry: CustomProjection = {
-      id,
+    const payload: CustomProjectionPayload = {
       slug: account.slug,
       period: drill.period,
       granularity: drill.granularity,
@@ -1351,20 +1584,36 @@ function AccountDetailPanel({
       escalationValue: newItem.escalation === "custom" ? newItem.escalationValue : 0,
       startDate: newItem.startDate,
     };
-    setCustomProjections((prev) => [...prev, entry]);
-    setNewItem({
-      name: "",
-      amount: 0,
-      direction: "outflow",
-      frequency: "monthly",
-      escalation: "standard",
-      escalationValue: 0,
-      startDate: drill.granularity === "monthly" ? `${drill.month}-01` : drill.period,
-    });
+    setIsSavingCustom(true);
+    try {
+      await onAddCustom(payload);
+      setNewItem({
+        name: "",
+        amount: 0,
+        direction: "outflow",
+        frequency: "monthly",
+        escalation: "standard",
+        escalationValue: 0,
+        startDate: drill.granularity === "monthly" ? `${drill.month}-01` : drill.period,
+      });
+    } catch (err) {
+      console.error("Unable to save custom projection", err);
+      alert(err instanceof Error ? err.message : "Unable to save custom projection.");
+    } finally {
+      setIsSavingCustom(false);
+    }
   };
 
-  const handleRemoveCustom = (id: string) => {
-    setCustomProjections((prev) => prev.filter((item) => item.id !== id));
+  const handleRemoveCustom = async (id: string) => {
+    setRemovingId(id);
+    try {
+      await onRemoveCustom(id);
+    } catch (err) {
+      console.error("Unable to remove custom projection", err);
+      alert(err instanceof Error ? err.message : "Unable to remove custom projection.");
+    } finally {
+      setRemovingId(null);
+    }
   };
 
   const weeklyNote =
@@ -1451,10 +1700,12 @@ function AccountDetailPanel({
                     <td className="py-2 text-right">
                       {row.source === "custom" && (
                         <button
+                          type="button"
                           onClick={() => handleRemoveCustom(row.id)}
-                          className="text-xs font-medium text-rose-600 hover:underline"
+                          disabled={removingId === row.id}
+                          className="text-xs font-medium text-rose-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Remove
+                          {removingId === row.id ? "Removing…" : "Remove"}
                         </button>
                       )}
                     </td>
@@ -1502,10 +1753,12 @@ function AccountDetailPanel({
                     <td className="py-2 text-right">
                       {row.source === "custom" && (
                         <button
+                          type="button"
                           onClick={() => handleRemoveCustom(row.id)}
-                          className="text-xs font-medium text-rose-600 hover:underline"
+                          disabled={removingId === row.id}
+                          className="text-xs font-medium text-rose-600 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          Remove
+                          {removingId === row.id ? "Removing…" : "Remove"}
                         </button>
                       )}
                     </td>
@@ -1605,11 +1858,13 @@ function AccountDetailPanel({
             Custom flows roll into the forecast on the selected cadence. Escalations apply each renewal.
           </p>
           <button
+            type="button"
             onClick={handleAddCustom}
-            className="rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
+            disabled={isSavingCustom}
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             style={{ backgroundColor: BRAND.blue }}
           >
-            Add custom flow
+            {isSavingCustom ? "Saving…" : "Add custom flow"}
           </button>
         </div>
       </div>

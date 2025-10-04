@@ -124,7 +124,7 @@ const AuthView: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-6 py-16">
+    <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-slate-950 px-4 py-16 sm:px-6">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.35),_transparent_60%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_rgba(16,185,129,0.25),_transparent_55%)]" />
@@ -161,8 +161,8 @@ const AuthView: React.FC = () => {
         <div className="absolute bottom-0 left-1/2 h-48 w-[140%] -translate-x-1/2 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
       </div>
 
-      <div className="relative z-10 w-full max-w-lg">
-        <div className="rounded-[32px] border border-white/20 bg-white/90 p-10 text-slate-900 shadow-[0_40px_90px_-30px_rgba(15,23,42,0.85)] backdrop-blur-xl">
+      <div className="relative z-10 w-full max-w-lg px-2 sm:px-4">
+        <div className="rounded-[32px] border border-white/20 bg-white/90 p-8 text-slate-900 shadow-[0_40px_90px_-30px_rgba(15,23,42,0.85)] backdrop-blur-xl sm:p-10">
           <div className="space-y-3 text-center">
             <p className="text-xs font-semibold uppercase tracking-[0.45em] text-slate-500">Profit First Forecast</p>
             <h1 className="text-3xl font-semibold text-slate-900">

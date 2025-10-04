@@ -13,7 +13,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { supabase } from "../lib/supabase";
+import { getSupabaseClient } from "../lib/supabase";
 
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };
@@ -52,6 +52,10 @@ const shortYM = (ym: string) => {
 
 const toSlug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+const supabase = getSupabaseClient();
+const SUPABASE_ENV_MESSAGE =
+  "Supabase environment variables are not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to use the dashboard.";
 
 // ------------------ types ------------------
 type ClientRow = { id: string; name: string };
@@ -103,6 +107,7 @@ const AuthView: React.FC = () => {
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [signupStep, setSignupStep] = useState<"plans" | "form">("form");
   const [selectedPlan, setSelectedPlan] = useState<string>(MEMBERSHIP_PLANS[0]?.id ?? "launch");
+  const supabaseConfigured = Boolean(supabase);
 
   const selectedPlanMeta = useMemo(
     () => MEMBERSHIP_PLANS.find((plan) => plan.id === selectedPlan) ?? MEMBERSHIP_PLANS[0],
@@ -113,6 +118,11 @@ const AuthView: React.FC = () => {
     event.preventDefault();
     setMessage(null);
     setLoading(true);
+    if (!supabase) {
+      setMessage({ type: "error", text: SUPABASE_ENV_MESSAGE });
+      setLoading(false);
+      return;
+    }
     try {
       if (mode === "sign-in") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -207,6 +217,9 @@ const AuthView: React.FC = () => {
                 ? "Select the membership level that fits your firm—each option can be customized later."
                 : "Set up your workspace so you can start onboarding clients."}
             </p>
+            {!supabaseConfigured && (
+              <p className="auth-message auth-message--error">{SUPABASE_ENV_MESSAGE}</p>
+            )}
           </div>
 
           {showPlanStep ? (
@@ -294,7 +307,7 @@ const AuthView: React.FC = () => {
                   {message.text}
                 </p>
               )}
-              <button type="submit" className="auth-submit" disabled={loading}>
+              <button type="submit" className="auth-submit" disabled={loading || !supabaseConfigured}>
                 {loading ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
               </button>
               <p className="auth-switch">
@@ -797,6 +810,12 @@ export default function Page() {
   // ------------ auth & client bootstrap ------------
   useEffect(() => {
     let active = true;
+    if (!supabase) {
+      setCheckingSession(false);
+      return () => {
+        active = false;
+      };
+    }
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       setSession(data.session);
@@ -825,7 +844,7 @@ export default function Page() {
   }, [session]);
 
   useEffect(() => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !supabase) return;
     let active = true;
     setClientsLoading(true);
     setClientsError(null);
@@ -852,9 +871,12 @@ export default function Page() {
     return () => {
       active = false;
     };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, supabase]);
 
   async function handleCreateClient(name: string): Promise<ClientRow> {
+    if (!supabase) {
+      throw new Error(SUPABASE_ENV_MESSAGE);
+    }
     if (!session) {
       throw new Error("You must be signed in to create clients.");
     }
@@ -898,7 +920,7 @@ export default function Page() {
 
   // ------------ load data for a client ------------
   useEffect(() => {
-    if (!clientId || !session) return;
+    if (!clientId || !session || !supabase) return;
     (async () => {
       // accounts
       const { data: paf } = await supabase
@@ -952,7 +974,7 @@ export default function Page() {
       setActivity((act ?? []) as ActLong[]);
       setBalances((bal ?? []) as BalLong[]);
     })();
-  }, [clientId]);
+  }, [clientId, session, supabase]);
 
   // re-filter months when controls change
   useEffect(() => {
@@ -996,7 +1018,7 @@ export default function Page() {
 
   // ------------ drill ------------
   async function openDrill(slug: string, ym: string) {
-    if (!clientId) return;
+    if (!clientId || !supabase) return;
     setDrill({ slug, ym });
     const { data } = await supabase
       .from("v_proj_occurrences")
@@ -1015,7 +1037,21 @@ export default function Page() {
   const userEmail = session?.user?.email ?? (typeof metadataEmail === "string" ? metadataEmail : null);
 
   async function handleSignOut() {
+    if (!supabase) return;
     await supabase.auth.signOut();
+  }
+
+  if (!supabase) {
+    return (
+      <main className="min-h-screen bg-slate-100">
+        <div className="flex min-h-screen items-center justify-center px-4 py-12">
+          <div className="max-w-lg space-y-3 text-center">
+            <h1 className="text-2xl font-semibold text-slate-900">Supabase configuration required</h1>
+            <p className="text-sm text-slate-600">{SUPABASE_ENV_MESSAGE}</p>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -1063,6 +1099,10 @@ export default function Page() {
               </select>
               <Button
                 onClick={async () => {
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
                   const name = prompt("New client name?");
                   if (!name) return;
                   const { data, error } = await supabase.from("clients").insert({ name }).select().single();
@@ -1090,6 +1130,10 @@ export default function Page() {
               <Button
                 className="border-0 bg-red-600 text-white hover:bg-red-700"
                 onClick={async () => {
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
                   if (!clientId) return;
                   const clientName = clients.find((c) => c.id === clientId)?.name ?? "this client";
                   if (
@@ -1332,6 +1376,10 @@ export default function Page() {
                 disabled={!clientId || !allocOk}
                 onClick={async () => {
                   if (!clientId || !allocOk) return;
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
                   await Promise.all(
                     accounts.map((a) =>
                       supabase.from("allocation_targets").upsert(
@@ -1358,6 +1406,10 @@ export default function Page() {
               </Button>
               <Button
                 onClick={async () => {
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
                   if (!clientId) return;
                   const name = prompt("Add PF account (example: Truck)");
                   if (!name) return;
@@ -1447,6 +1499,7 @@ function DrillTable({
   coaMap: Record<string, string>;
 }) {
   useEffect(() => {
+    if (!supabase) return;
     (async () => {
       const { data } = await supabase
         .from("v_proj_occurrences")
@@ -1456,7 +1509,7 @@ function DrillTable({
       const filtered = (data ?? []).filter((r: any) => coaMap[r.coa_account_id] === slug);
       setOcc(filtered as OccRow[]);
     })();
-  }, [clientId, ym, slug]);
+  }, [clientId, ym, slug, supabase]);
 
   const inflows = occ.filter((r) => r.amount > 0);
   const outflows = occ.filter((r) => r.amount < 0);

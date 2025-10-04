@@ -98,14 +98,19 @@ type CustomProjection = {
 };
 
 // ------------------ small UI atoms ------------------
-const Card: React.FC<React.PropsWithChildren<{ title?: string }>> = ({ title, children }) => (
-  <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
+
+const Card: React.FC<
+  React.PropsWithChildren<{ title?: string; className?: string; footer?: React.ReactNode }>
+> = ({ title, className, footer, children }) => (
+  <div className={cn("rounded-2xl border border-slate-200 bg-white shadow-sm", className)}>
     {title && (
-      <div className="px-4 py-2 text-sm font-semibold text-slate-800 border-b bg-slate-50 rounded-t-xl">
-        {title}
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-6 py-4 text-sm font-semibold text-slate-800">
+        <span>{title}</span>
+        {footer && <span className="text-xs font-medium text-slate-500">{footer}</span>}
       </div>
     )}
-    <div className="p-4">{children}</div>
+    <div className="px-6 py-5">{children}</div>
   </div>
 );
 
@@ -113,7 +118,7 @@ const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({ class
   <button
     {...p}
     className={
-      "px-3 py-2 rounded-lg text-sm font-medium bg-white border border-slate-300 hover:bg-slate-50 " +
+      "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium transition hover:bg-slate-50 " +
       (className || "")
     }
   />
@@ -471,24 +476,40 @@ export default function Page() {
       `}</style>
 
       <div className="flex min-h-screen flex-col">
-        <header className="border-b border-slate-200 bg-white/90 backdrop-blur">
-          <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-4 px-6 py-4">
-            <div className="flex flex-1 flex-wrap items-end gap-6">
+        <header className="border-b border-slate-200 bg-white/80 backdrop-blur">
+          <div className="mx-auto w-full max-w-7xl px-6 py-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Scenario</p>
+                <h1 className="text-2xl font-semibold text-slate-900">Profit First cash projection</h1>
+                <p className="text-sm text-slate-500">
+                  {activeClient?.name ? `Align allocations for ${activeClient.name}.` : "Select a client to begin."}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/settings"
+                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-400 hover:text-blue-600"
+                >
+                  Settings
+                </Link>
+              </div>
+            </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <label className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Scenario name</span>
                 <input
                   value={scenarioName}
                   onChange={(e) => setScenarioName(e.target.value)}
-                  className="mt-1 w-full min-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none"
                 />
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Client</p>
-                <div className="mt-1 flex items-center gap-2">
+              </label>
+              <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Client</span>
+                <div className="flex items-center gap-2">
                   <select
                     value={clientId ?? ""}
                     onChange={(e) => setClientId(e.target.value)}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
                   >
                     {clients.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -521,354 +542,411 @@ export default function Page() {
                   </Button>
                 </div>
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Starting period</p>
+              <label className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Starting period</span>
                 <input
                   type="month"
                   value={startMonth}
                   onChange={(e) => setStartMonth(e.target.value)}
-                  className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
                 />
+              </label>
+              <div className="flex flex-col justify-between gap-2 rounded-xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Forecast window</span>
+                <p className="text-sm font-semibold text-slate-900">{periodRangeLabel}</p>
+                <p className="text-xs text-slate-500">{periodCountLabel}</p>
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">View</p>
-                <div className="mt-1 flex overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                  <button
-                    onClick={() => setGranularity("monthly")}
-                    className={`px-3 py-2 text-sm font-medium transition ${
-                      granularity === "monthly"
-                        ? "bg-white text-blue-600 shadow-inner"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    Monthly
-                  </button>
-                  <button
-                    onClick={() => setGranularity("weekly")}
-                    className={`px-3 py-2 text-sm font-medium transition ${
-                      granularity === "weekly"
-                        ? "bg-white text-blue-600 shadow-inner"
-                        : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    13-week
-                  </button>
-                </div>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-wide text-slate-500">Horizon</p>
-                <select
-                  value={String(horizon)}
-                  onChange={(e) => setHorizon(Number(e.target.value))}
-                  className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none"
-                >
-                  {horizonChoices.map((choice) => (
-                    <option key={choice} value={choice}>
-                      {choice} {granularity === "weekly" ? "weeks" : "months"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Link
-                href="/settings"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-blue-400 hover:text-blue-600"
-              >
-                Settings
-              </Link>
             </div>
           </div>
         </header>
 
-        <div className="flex flex-1 flex-col">
-          <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-6 py-6 xl:flex-row">
-            <aside className="w-full space-y-6 xl:max-w-sm">
-              <Card>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-500">{timelineLabel} outlook</p>
-                    <h2 className="mt-2 text-3xl font-semibold text-slate-900">{money(currentTotalBalance)}</h2>
-                    <p className="mt-2 text-sm text-slate-500">
-                      Current balance across Profit First accounts for {activeClient?.name ?? "your client"}.
-                    </p>
-                  </div>
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                      projectedChange >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
-                    }`}
-                  >
-                    {projectedChange >= 0 ? "+" : ""}
-                    {money(projectedChange)}
-                  </span>
-                </div>
-                <dl className="mt-6 space-y-4 text-sm">
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Forecast window</dt>
-                    <dd className="font-semibold text-slate-700">{periodRangeLabel}</dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Periods</dt>
-                    <dd className="font-semibold text-slate-700">{periodCountLabel}</dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Net change</dt>
-                    <dd className={`font-semibold ${projectedChange >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                      {projectedChange >= 0 ? "+" : ""}
-                      {money(projectedChange)}
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Average net</dt>
-                    <dd className="font-semibold text-slate-700">{money(averageNetChange)}</dd>
-                  </div>
-                </dl>
-              </Card>
-
-              <Card>
-                <h3 className="text-sm font-semibold text-slate-700">Revenue &amp; costs</h3>
-                <dl className="mt-4 space-y-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Avg real revenue</dt>
-                    <dd className="font-semibold text-slate-800">{money(averageRealRevenue)}</dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Avg direct costs</dt>
-                    <dd className="font-semibold text-slate-800">{money(averageDirectCosts)}</dd>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-slate-500">Avg net revenue</dt>
-                    <dd className={`font-semibold ${netRealRevenueAvg >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
-                      {money(netRealRevenueAvg)}
-                    </dd>
-                  </div>
-                </dl>
-                <p className="mt-4 text-xs text-slate-500">
-                  Real revenue subtracts direct costs (materials and direct labor) from income to follow Profit First guidance.
-                </p>
-              </Card>
-
-              <Card>
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-700">Allocation targets</h3>
-                  <Link href="/settings" className="text-xs font-semibold text-blue-600 hover:underline">
-                    Edit
-                  </Link>
-                </div>
-                <ul className="mt-4 space-y-3 text-sm">
-                  {[
-                    { slug: "profit", label: "Profit", value: profitTargetPct },
-                    { slug: "owners_pay", label: "Owner's Pay", value: ownersPayTargetPct },
-                    { slug: "tax", label: "Tax", value: taxTargetPct },
-                    { slug: "operating", label: "Operating Expenses", value: operatingTargetPct },
-                    { slug: "vault", label: "Vault", value: vaultTargetPct },
-                  ].map((row) => (
-                    <li key={row.slug} className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="inline-block h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: getAccountColor(row.slug) }}
-                        />
-                        <span className="text-slate-600">{row.label}</span>
+        <div className="flex flex-1 flex-col bg-slate-100">
+          <div className="flex-1 py-10">
+            <div className="mx-auto w-full max-w-7xl px-6">
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+                <div className="space-y-6 xl:col-span-8">
+                  <Card>
+                    <div className="flex flex-wrap items-start justify-between gap-6">
+                      <div className="max-w-xl space-y-2">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">{timelineLabel} cash flow</p>
+                        <h2 className="text-2xl font-semibold text-slate-900">
+                          {activeClient?.name ?? "Client"} forecast
+                        </h2>
+                        <p className="text-sm text-slate-500">
+                          {periodRangeLabel}. Toggle totals or individual accounts to explore the projection.
+                        </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${Math.min(row.value, 100)}%`,
-                              backgroundColor: getAccountColor(row.slug),
-                            }}
-                          />
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex overflow-hidden rounded-full border border-slate-200 bg-slate-50">
+                          <button
+                            onClick={() => setMode("total")}
+                            className={cn(
+                              "px-3 py-2 text-sm font-medium",
+                              mode === "total"
+                                ? "bg-white text-blue-600 shadow"
+                                : "text-slate-500 hover:text-slate-700"
+                            )}
+                          >
+                            Totals
+                          </button>
+                          <button
+                            onClick={() => setMode("accounts")}
+                            className={cn(
+                              "px-3 py-2 text-sm font-medium",
+                              mode === "accounts"
+                                ? "bg-white text-blue-600 shadow"
+                                : "text-slate-500 hover:text-slate-700"
+                            )}
+                          >
+                            Accounts
+                          </button>
                         </div>
-                        <span className="font-semibold text-slate-800">{row.value.toFixed(1)}%</span>
+                        <div className="flex overflow-hidden rounded-full border border-slate-200 bg-slate-50">
+                          <button
+                            onClick={() => setGranularity("monthly")}
+                            className={cn(
+                              "px-3 py-2 text-sm font-medium",
+                              granularity === "monthly"
+                                ? "bg-white text-blue-600 shadow"
+                                : "text-slate-500 hover:text-slate-700"
+                            )}
+                          >
+                            Monthly
+                          </button>
+                          <button
+                            onClick={() => setGranularity("weekly")}
+                            className={cn(
+                              "px-3 py-2 text-sm font-medium",
+                              granularity === "weekly"
+                                ? "bg-white text-blue-600 shadow"
+                                : "text-slate-500 hover:text-slate-700"
+                            )}
+                          >
+                            13-week
+                          </button>
+                        </div>
+                        <select
+                          className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm"
+                          value={horizon}
+                          onChange={(e) => setHorizon(Number(e.target.value))}
+                        >
+                          {horizonChoices.map((choice) => (
+                            <option key={choice} value={choice}>
+                              {choice} {granularity === "weekly" ? "weeks" : "months"}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-4 text-xs text-slate-500">
-                  Targets update from the latest allocation saved in your Supabase workspace.
-                </p>
-              </Card>
-            </aside>
-
-            <section className="flex-1 space-y-6">
-              <Card>
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-500">{timelineLabel} cash flow</p>
-                    <h2 className="mt-1 text-2xl font-semibold text-slate-900">
-                      {activeClient?.name ?? "Client"} forecast
-                    </h2>
-                    <p className="mt-2 text-sm text-slate-500">
-                      {periodRangeLabel}. Toggle totals or individual accounts to explore the projection.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                      <button
-                        onClick={() => setMode("total")}
-                        className={`px-3 py-2 text-sm font-medium transition ${
-                          mode === "total"
-                            ? "bg-white text-blue-600 shadow-inner"
-                            : "text-slate-500 hover:text-slate-700"
-                        }`}
-                      >
-                        Totals
-                      </button>
-                      <button
-                        onClick={() => setMode("accounts")}
-                        className={`px-3 py-2 text-sm font-medium transition ${
-                          mode === "accounts"
-                            ? "bg-white text-blue-600 shadow-inner"
-                            : "text-slate-500 hover:text-slate-700"
-                        }`}
-                      >
-                        Accounts
-                      </button>
                     </div>
+                    <div className="mt-8 h-[360px] w-full rounded-2xl bg-slate-50 p-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={BRAND.blue} stopOpacity={0.4} />
+                              <stop offset="95%" stopColor={BRAND.blue} stopOpacity={0} />
+                            </linearGradient>
+                            <linearGradient id="colorDerived" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor={BRAND.orange} stopOpacity={0.4} />
+                              <stop offset="95%" stopColor={BRAND.orange} stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                          <XAxis dataKey="label" stroke="#475569" tickLine={false} axisLine={false} />
+                          <YAxis stroke="#475569" tickFormatter={money} width={96} tickLine={false} axisLine={false} />
+                          <Tooltip formatter={(value: number) => money(value)} contentStyle={{ borderRadius: 12 }} />
+                          <Legend verticalAlign="top" height={36} />
+                          {mode === "total" ? (
+                            <Area type="monotone" dataKey="Total" stroke={BRAND.blue} fill="url(#colorTotal)" strokeWidth={2} />
+                          ) : (
+                            displayAccounts.map((acc) => (
+                              <Area
+                                key={acc.slug}
+                                type="monotone"
+                                dataKey={acc.name}
+                                stroke={acc.color}
+                                fill="url(#colorDerived)"
+                                strokeWidth={2}
+                              />
+                            ))
+                          )}
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </Card>
+
+                  <div className="grid gap-6 lg:grid-cols-2">
+                    <Card className="h-full">
+                      <div className="space-y-4">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Current balance</p>
+                        <h3 className="text-3xl font-semibold text-slate-900">{money(currentTotalBalance)}</h3>
+                        <p className="text-sm text-slate-500">
+                          Aggregate of all Profit First accounts at the beginning of the forecast window.
+                        </p>
+                        <dl className="grid gap-3 text-sm">
+                          <div className="flex items-center justify-between">
+                            <dt className="text-slate-500">Forecast window</dt>
+                            <dd className="font-semibold text-slate-700">{periodRangeLabel}</dd>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <dt className="text-slate-500">Net change</dt>
+                            <dd className={cn(
+                              "font-semibold",
+                              projectedChange >= 0 ? "text-emerald-600" : "text-rose-600"
+                            )}>
+                              {projectedChange >= 0 ? "+" : ""}
+                              {money(projectedChange)}
+                            </dd>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <dt className="text-slate-500">Average net</dt>
+                            <dd className="font-semibold text-slate-700">{money(averageNetChange)}</dd>
+                          </div>
+                        </dl>
+                      </div>
+                    </Card>
+
+                    <Card className="h-full">
+                      <div className="space-y-4">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Revenue mix</p>
+                        <div className="grid gap-3 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500">Average real revenue</span>
+                            <span className="font-semibold text-slate-800">{money(averageRealRevenue)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500">Average direct costs</span>
+                            <span className="font-semibold text-slate-800">{money(averageDirectCosts)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500">Average net revenue</span>
+                            <span className={cn(
+                              "font-semibold",
+                              netRealRevenueAvg >= 0 ? "text-emerald-600" : "text-rose-600"
+                            )}>
+                              {money(netRealRevenueAvg)}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Real revenue subtracts direct costs (materials and direct labor) from income per Profit First guidance.
+                        </p>
+                      </div>
+                    </Card>
                   </div>
-                </div>
-                <div className="mt-6 h-[360px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="label" stroke="#475569" fontSize={12} />
-                      <YAxis
-                        stroke="#475569"
-                        fontSize={12}
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                      />
-                      <Tooltip formatter={(value: number) => money(value)} />
-                      <Legend />
-                      {mode === "total" ? (
-                        <Area
-                          type="monotone"
-                          dataKey="Total"
-                          stroke={BRAND.blue}
-                          fillOpacity={0.15}
-                          fill={BRAND.blue}
-                        />
-                      ) : (
-                        displayAccounts.map((a) => (
-                          <Area
-                            key={a.slug}
-                            type="monotone"
-                            dataKey={a.name}
-                            stroke={a.color || "#64748b"}
-                            fillOpacity={0.1}
-                            fill={a.color || "#64748b"}
-                          />
-                        ))
-                      )}
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-                <p className="mt-4 text-xs text-slate-500">
-                  Chart values display projected ending balances. Switch to weekly mode to view 13-week allocations.
-                </p>
-              </Card>
 
-              <Card title={`Ending balances (${granularity === "weekly" ? "weekly roll-forward" : "month end"})`}>
-                <p className="mb-3 text-xs text-slate-500">
-                  Click any value to open the detailed account drill-down.
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full table-fixed text-sm">
-                    <thead>
-                      <tr className="bg-slate-50">
-                        <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 text-left font-semibold">Account</th>
-                        {periods.map((period) => (
-                          <th key={period.key} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
-                            {period.label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {displayAccounts.map((acc) => (
-                        <tr key={acc.slug} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                          <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-slate-800">
+                  <Card
+                    className="overflow-hidden"
+                    title={`Ending balances (${granularity === "weekly" ? "weekly roll-forward" : "month end"})`}
+                    footer={
+                      granularity === "weekly"
+                        ? "Weekly values project each allocation cycle."
+                        : "Month-end balances for every account."
+                    }
+                  >
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full table-fixed text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500">
+                            <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                              Account
+                            </th>
+                            {periods.map((period) => (
+                              <th
+                                key={period.key}
+                                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide whitespace-nowrap"
+                              >
+                                {period.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {displayAccounts.map((acc) => (
+                            <tr key={acc.slug} className="bg-white hover:bg-blue-50/60">
+                              <td className="sticky left-0 z-10 bg-white px-4 py-3 text-sm font-medium text-slate-800">
+                                <div className="flex items-center gap-2">
+                                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: acc.color }} />
+                                  <span>{acc.name}</span>
+                                  {!acc.configured && (
+                                    <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">
+                                      Not linked
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              {periods.map((period) => {
+                                const ending = monthlyBalanceForSlug(period.month, acc.slug);
+                                const net = monthlyActivityForSlug(period.month, acc.slug);
+                                const value =
+                                  granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
+                                    ? estimateWeeklyBalance(ending, net, period.weekIndex, period.weeksInMonth)
+                                    : ending;
+                                return (
+                                  <td
+                                    key={period.key}
+                                    className="px-4 py-3 text-right font-semibold text-slate-700 transition hover:text-blue-600"
+                                    onClick={() => openDrill(acc.slug, period)}
+                                  >
+                                    {money(value)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+
+                  <Card
+                    className="overflow-hidden"
+                    title={`${granularity === "weekly" ? "Weekly" : "Monthly"} net activity`}
+                    footer="Inflows minus outflows across the projection horizon."
+                  >
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full table-fixed text-sm">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-500">
+                            <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                              Account
+                            </th>
+                            {periods.map((period) => (
+                              <th
+                                key={period.key}
+                                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide whitespace-nowrap"
+                              >
+                                {period.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {displayAccounts.map((acc) => (
+                            <tr key={acc.slug} className="bg-white hover:bg-blue-50/60">
+                              <td className="sticky left-0 z-10 bg-white px-4 py-3 text-sm font-medium text-slate-800">{acc.name}</td>
+                              {periods.map((period) => {
+                                const net = monthlyActivityForSlug(period.month, acc.slug);
+                                const value =
+                                  granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
+                                    ? net / (period.weeksInMonth || 1)
+                                    : net;
+                                return (
+                                  <td
+                                    key={period.key}
+                                    className="px-4 py-3 text-right font-semibold text-slate-700 transition hover:text-blue-600"
+                                    onClick={() => openDrill(acc.slug, period)}
+                                  >
+                                    {money(value)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+
+                <aside className="space-y-6 xl:col-span-4">
+                  <Card>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-2">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Projected ending balance</p>
+                        <h3 className="text-2xl font-semibold text-slate-900">{money(endingTotalBalance)}</h3>
+                        <p className="text-xs text-slate-500">
+                          Based on allocations and custom inflows/outflows across the selected horizon.
+                        </p>
+                      </div>
+                      <span
+                        className={cn(
+                          "rounded-full px-3 py-1 text-xs font-semibold",
+                          projectedChange >= 0 ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"
+                        )}
+                      >
+                        {projectedChange >= 0 ? "+" : ""}
+                        {money(projectedChange)}
+                      </span>
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-slate-700">Allocation targets</h3>
+                        <Link href="/settings" className="text-xs font-semibold text-blue-600 hover:underline">
+                          Edit
+                        </Link>
+                      </div>
+                      <ul className="space-y-3 text-sm">
+                        {[
+                          { slug: "profit", label: "Profit", value: profitTargetPct },
+                          { slug: "owners_pay", label: "Owner's Pay", value: ownersPayTargetPct },
+                          { slug: "tax", label: "Tax", value: taxTargetPct },
+                          { slug: "operating", label: "Operating Expenses", value: operatingTargetPct },
+                          { slug: "vault", label: "Vault", value: vaultTargetPct },
+                        ].map((row) => (
+                          <li key={row.slug} className="flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2">
-                              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: acc.color }} />
-                              <span>{acc.name}</span>
-                              {!acc.configured && (
-                                <span className="ml-2 rounded-full bg-orange-100 px-2 py-0.5 text-xs text-orange-700">
-                                  Not linked
-                                </span>
-                              )}
+                              <span
+                                className="inline-block h-2.5 w-2.5 rounded-full"
+                                style={{ backgroundColor: getAccountColor(row.slug) }}
+                              />
+                              <span className="text-slate-600">{row.label}</span>
                             </div>
-                          </td>
-                          {periods.map((period) => {
-                            const ending = monthlyBalanceForSlug(period.month, acc.slug);
-                            const net = monthlyActivityForSlug(period.month, acc.slug);
-                            const value =
-                              granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
-                                ? estimateWeeklyBalance(ending, net, period.weekIndex, period.weeksInMonth)
-                                : ending;
-                            return (
-                              <td
-                                key={period.key}
-                                className="px-3 py-2 text-right font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-600"
-                                onClick={() => openDrill(acc.slug, period)}
-                              >
-                                {money(value)}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-
-              <Card title={`${granularity === "weekly" ? "Weekly" : "Monthly"} net activity`}>
-                <p className="mb-3 text-xs text-slate-500">
-                  Net activity shows inflows minus outflows for each account. Ending balance equals beginning balance plus net activity.
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full table-fixed text-sm">
-                    <thead>
-                      <tr className="bg-slate-50">
-                        <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 text-left font-semibold">Account</th>
-                        {periods.map((period) => (
-                          <th key={period.key} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
-                            {period.label}
-                          </th>
+                            <div className="flex items-center gap-2">
+                              <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${Math.min(row.value, 100)}%`,
+                                    backgroundColor: getAccountColor(row.slug),
+                                  }}
+                                />
+                              </div>
+                              <span className="font-semibold text-slate-800">{row.value.toFixed(1)}%</span>
+                            </div>
+                          </li>
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {displayAccounts.map((acc) => (
-                        <tr key={acc.slug} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                          <td className="sticky left-0 z-10 bg-white px-3 py-2 font-medium text-slate-800">{acc.name}</td>
-                          {periods.map((period) => {
-                            const net = monthlyActivityForSlug(period.month, acc.slug);
-                            const value =
-                              granularity === "weekly" && period.weekIndex !== undefined && period.weeksInMonth
-                                ? net / (period.weeksInMonth || 1)
-                                : net;
-                            return (
-                              <td
-                                key={period.key}
-                                className="px-3 py-2 text-right font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-600"
-                                onClick={() => openDrill(acc.slug, period)}
-                              >
-                                {money(value)}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            </section>
+                      </ul>
+                      <p className="text-xs text-slate-500">
+                        Targets update from the latest allocation saved in your Supabase workspace.
+                      </p>
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-semibold text-slate-700">Key milestones</h3>
+                      <ul className="space-y-3 text-sm text-slate-600">
+                        <li className="flex items-center justify-between">
+                          <span>Next allocation run</span>
+                          <span className="font-semibold text-slate-800">{new Date(allocDate).toLocaleDateString()}</span>
+                        </li>
+                        <li className="flex items-center justify-between">
+                          <span>Accounts configured</span>
+                          <span className="font-semibold text-slate-800">{allocationAccounts.length} of {displayAccounts.length}</span>
+                        </li>
+                        <li className="flex items-center justify-between">
+                          <span>Custom projections</span>
+                          <span className="font-semibold text-slate-800">{customProjections.length}</span>
+                        </li>
+                      </ul>
+                      {!allocOk && (
+                        <p className="rounded-lg bg-orange-50 px-3 py-2 text-xs font-medium text-orange-700">
+                          Allocation targets sum to {(allocTotal * 100).toFixed(1)}%. Adjust values in settings to reach 100%.
+                        </p>
+                      )}
+                    </div>
+                  </Card>
+                </aside>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
       {/* drill panel */}
       {drill && (
         <div className="fixed inset-0 z-40 flex items-center justify-center px-4 py-6">

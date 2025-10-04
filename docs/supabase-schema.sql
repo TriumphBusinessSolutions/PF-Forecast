@@ -72,6 +72,65 @@ for each row execute function public.touch_allocation_targets_updated_at();
 
 comment on table public.allocation_targets is 'Current allocation targets used for automated allocations on the chosen cadence.';
 
+-- Baseline allocation percentages prior to a rollout plan
+create table if not exists public.allocation_current (
+  client_id uuid not null references public.clients(id) on delete cascade,
+  pf_slug text not null,
+  pct numeric(6,5) not null check (pct >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint allocation_current_pk primary key (client_id, pf_slug),
+  constraint allocation_current_pf_accounts_fk
+    foreign key (client_id, pf_slug)
+    references public.pf_accounts (client_id, slug)
+    on delete cascade
+);
+
+create or replace function public.touch_allocation_current_updated_at()
+returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_touch_allocation_current_updated_at on public.allocation_current;
+create trigger trg_touch_allocation_current_updated_at
+before update on public.allocation_current
+for each row execute function public.touch_allocation_current_updated_at();
+
+comment on table public.allocation_current is 'Baseline allocation percentages prior to rollout adjustments.';
+
+-- Quarter-by-quarter rollout adjustments that converge to the targets
+create table if not exists public.allocation_rollout_steps (
+  client_id uuid not null references public.clients(id) on delete cascade,
+  quarter_index integer not null check (quarter_index > 0),
+  pf_slug text not null,
+  pct numeric(6,5) not null check (pct >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint allocation_rollout_steps_pk primary key (client_id, quarter_index, pf_slug),
+  constraint allocation_rollout_pf_accounts_fk
+    foreign key (client_id, pf_slug)
+    references public.pf_accounts (client_id, slug)
+    on delete cascade
+);
+
+create or replace function public.touch_allocation_rollout_steps_updated_at()
+returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_touch_allocation_rollout_steps_updated_at on public.allocation_rollout_steps;
+create trigger trg_touch_allocation_rollout_steps_updated_at
+before update on public.allocation_rollout_steps
+for each row execute function public.touch_allocation_rollout_steps_updated_at();
+
+comment on table public.allocation_rollout_steps is 'Quarter-by-quarter target percentages progressing toward the allocation goals.';
+
 -- Monthly net activity by Profit First bucket (source for v_monthly_activity_long)
 create table if not exists public.pf_monthly_activity (
   id uuid primary key default gen_random_uuid(),

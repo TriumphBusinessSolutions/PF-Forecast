@@ -41,6 +41,92 @@ type DisplayAccount = {
 // ------------------ small UI atoms ------------------
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" ");
 
+type PercentMap = Record<string, string>;
+
+type RolloutRow = {
+  quarter: number;
+  values: PercentMap;
+};
+
+const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
+
+const formatPercentNumber = (value: number) => {
+  if (!Number.isFinite(value)) return "";
+  const clean = clampPercent(value);
+  const rounded = Math.round(clean * 10) / 10;
+  if (Math.abs(rounded - Math.round(rounded)) < 0.0001) {
+    return String(Math.round(rounded));
+  }
+  return rounded.toFixed(1).replace(/\.0$/, "");
+};
+
+const decimalToPercentString = (decimal?: number | null) => {
+  if (decimal === null || decimal === undefined) return "";
+  return formatPercentNumber(decimal * 100);
+};
+
+const percentStringToDecimal = (value?: string) => {
+  if (!value) return 0;
+  const num = parseFloat(value);
+  return Number.isFinite(num) ? clampPercent(num) / 100 : 0;
+};
+
+const percentStringToNumber = (value?: string) => {
+  if (!value) return 0;
+  const num = parseFloat(value);
+  return Number.isFinite(num) ? clampPercent(num) : 0;
+};
+
+const generateRolloutRows = (
+  current: Record<string, number>,
+  target: Record<string, number>,
+  quarters: number,
+  slugs: string[]
+) => {
+  const safeQuarters = Math.max(1, quarters);
+  const rows: RolloutRow[] = [];
+  for (let idx = 1; idx <= safeQuarters; idx += 1) {
+    const values: PercentMap = {};
+    slugs.forEach((slug) => {
+      const currentPct = current[slug] ?? 0;
+      const targetPct = target[slug] ?? 0;
+      const interpolated = currentPct + ((targetPct - currentPct) * idx) / safeQuarters;
+      values[slug] = formatPercentNumber(interpolated);
+    });
+    rows.push({ quarter: idx, values });
+  }
+  return rows;
+};
+
+const recalcRolloutRows = (
+  rows: RolloutRow[],
+  changedIndex: number,
+  slug: string,
+  target: Record<string, number>
+) => {
+  const total = rows.length;
+  if (!rows[changedIndex]) return rows;
+  const updated = rows.map((row) => ({
+    quarter: row.quarter,
+    values: { ...row.values },
+  }));
+  const changedValue = percentStringToNumber(updated[changedIndex].values[slug]);
+  if (!Number.isFinite(changedValue)) return updated;
+  const remaining = total - (changedIndex + 1);
+  const targetValue = target[slug] ?? changedValue;
+  if (remaining <= 0) {
+    updated[total - 1].values[slug] = formatPercentNumber(targetValue);
+    return updated;
+  }
+  for (let idx = changedIndex + 1; idx < total; idx += 1) {
+    const progress = idx - changedIndex;
+    const nextValue = changedValue + ((targetValue - changedValue) * progress) / remaining;
+    updated[idx].values[slug] = formatPercentNumber(nextValue);
+  }
+  updated[total - 1].values[slug] = formatPercentNumber(targetValue);
+  return updated;
+};
+
 const Card: React.FC<React.PropsWithChildren<{ title?: string; subtitle?: string }>> = ({
   title,
   subtitle,
@@ -73,7 +159,8 @@ export default function SettingsPage() {
   const [clients, setClients] = useState<ClientRow[]>([]);
   const [clientId, setClientId] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<PFAccount[]>([]);
-  const [alloc, setAlloc] = useState<Record<string, number>>({});
+  const [allocInputs, setAllocInputs] = useState<PercentMap>({});
+  const [currentAllocInputs, setCurrentAllocInputs] = useState<PercentMap>({});
   const [allocDate, setAllocDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   const [allocationSettings, setAllocationSettings] = useState({
@@ -83,17 +170,19 @@ export default function SettingsPage() {
     monthlyDay: 1,
   });
   const [rolloutPlan, setRolloutPlan] = useState({ quarters: 4 });
+  const [rolloutRows, setRolloutRows] = useState<RolloutRow[]>([]);
+  const [rolloutHydrated, setRolloutHydrated] = useState(false);
   const [profitSettings, setProfitSettings] = useState({
-    bonusPct: 0.5,
-    vaultPct: 0.5,
+    bonusPct: "50",
+    vaultPct: "50",
     nextDistribution: new Date().toISOString().slice(0, 10),
   });
   const [taxSettings, setTaxSettings] = useState({
     mode: "calculation" as "flat" | "calculation",
-    flatAmount: 0,
-    taxRate: 0.1,
-    estimatedPaid: 0,
-    vaultPct: 0,
+    flatAmount: "",
+    taxRate: "10",
+    estimatedPaid: "",
+    vaultPct: "",
   });
   const [activeSection, setActiveSection] = useState("allocations");
   const [isLoading, setIsLoading] = useState(false);
@@ -106,10 +195,39 @@ export default function SettingsPage() {
       const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
+      const toPercentInput = (value: unknown) => {
+        if (value === null || value === undefined) return "";
+        if (typeof value === "string") return value;
+        if (typeof value === "number") {
+          if (value >= 0 && value <= 1) {
+            return formatPercentNumber(value * 100);
+          }
+          return formatPercentNumber(value);
+        }
+        return "";
+      };
+      const toText = (value: unknown) => {
+        if (value === null || value === undefined) return "";
+        return String(value);
+      };
       if (parsed.allocationSettings) setAllocationSettings(parsed.allocationSettings);
       if (parsed.rolloutPlan) setRolloutPlan(parsed.rolloutPlan);
-      if (parsed.profitSettings) setProfitSettings(parsed.profitSettings);
-      if (parsed.taxSettings) setTaxSettings(parsed.taxSettings);
+      if (parsed.profitSettings) {
+        setProfitSettings((prev) => ({
+          bonusPct: toPercentInput(parsed.profitSettings.bonusPct ?? prev.bonusPct),
+          vaultPct: toPercentInput(parsed.profitSettings.vaultPct ?? prev.vaultPct),
+          nextDistribution: parsed.profitSettings.nextDistribution ?? prev.nextDistribution,
+        }));
+      }
+      if (parsed.taxSettings) {
+        setTaxSettings((prev) => ({
+          mode: parsed.taxSettings.mode ?? prev.mode,
+          flatAmount: toText(parsed.taxSettings.flatAmount ?? prev.flatAmount),
+          taxRate: toPercentInput(parsed.taxSettings.taxRate ?? prev.taxRate),
+          estimatedPaid: toText(parsed.taxSettings.estimatedPaid ?? prev.estimatedPaid),
+          vaultPct: toPercentInput(parsed.taxSettings.vaultPct ?? prev.vaultPct),
+        }));
+      }
     } catch (err) {
       console.warn("Unable to load saved settings", err);
     }
@@ -193,11 +311,79 @@ export default function SettingsPage() {
         .eq("client_id", id)
         .eq("effective_date", eff);
       if (allocError) throw allocError;
-      const map: Record<string, number> = {};
+      const targetMap: PercentMap = {};
       (arows ?? []).forEach((row: any) => {
-        map[row.pf_slug] = Number(row.pct || 0);
+        targetMap[row.pf_slug] = decimalToPercentString(Number(row.pct));
       });
-      setAlloc(map);
+      setAllocInputs(targetMap);
+
+      let currentMap: PercentMap = {};
+      const { data: currentRows, error: currentError } = await client
+        .from("allocation_current")
+        .select("pf_slug, pct")
+        .eq("client_id", id);
+      if (currentError) {
+        if (currentError.code && currentError.code === "42P01") {
+          console.warn("allocation_current table missing; defaulting to targets", currentError);
+        } else {
+          throw currentError;
+        }
+      }
+      (currentRows ?? []).forEach((row: any) => {
+        currentMap[row.pf_slug] = decimalToPercentString(Number(row.pct));
+      });
+      if (Object.keys(currentMap).length === 0) {
+        currentMap = { ...targetMap };
+      } else {
+        Object.keys(targetMap).forEach((slug) => {
+          if (currentMap[slug] === undefined) {
+            currentMap[slug] = targetMap[slug];
+          }
+        });
+      }
+      setCurrentAllocInputs(currentMap);
+
+      const { data: rolloutData, error: rolloutError } = await client
+        .from("allocation_rollout_steps")
+        .select("quarter_index, pf_slug, pct")
+        .eq("client_id", id)
+        .order("quarter_index", { ascending: true })
+        .order("pf_slug", { ascending: true });
+      if (rolloutError) {
+        if (rolloutError.code && rolloutError.code === "42P01") {
+          console.warn("allocation_rollout_steps table missing; rollout plan will be generated", rolloutError);
+          setRolloutRows([]);
+          setRolloutHydrated(false);
+        } else {
+          throw rolloutError;
+        }
+      } else if ((rolloutData ?? []).length) {
+        const grouped = new Map<number, PercentMap>();
+        (rolloutData ?? []).forEach((row: any) => {
+          if (!grouped.has(row.quarter_index)) {
+            grouped.set(row.quarter_index, {});
+          }
+          grouped.get(row.quarter_index)![row.pf_slug] = decimalToPercentString(Number(row.pct));
+        });
+        const allSlugs = Array.from(
+          new Set([...Object.keys(targetMap), ...Object.keys(currentMap)])
+        );
+        const rows: RolloutRow[] = Array.from(grouped.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([quarter, values]) => {
+            const filled: PercentMap = {};
+            allSlugs.forEach((slug) => {
+              filled[slug] = values[slug] ?? targetMap[slug] ?? currentMap[slug] ?? "";
+            });
+            return { quarter, values: filled };
+          });
+        setRolloutRows(rows);
+        setRolloutPlan({ quarters: rows.length });
+        setRolloutHydrated(true);
+      } else {
+        setRolloutRows([]);
+        setRolloutHydrated(false);
+      }
     } catch (err) {
       console.error("Unable to load client configuration", err);
       setDataError(
@@ -250,18 +436,78 @@ export default function SettingsPage() {
     return [...mainAccounts, ...customAccounts].sort((a, b) => a.sortOrder - b.sortOrder);
   }, [mainAccounts, customAccounts]);
 
-  const allocationAccounts = useMemo(() => displayAccounts.filter((acc) => acc.source !== "derived"), [displayAccounts]);
+  const allocationAccounts = useMemo(
+    () => displayAccounts.filter((acc) => acc.source !== "derived" && acc.slug !== "income"),
+    [displayAccounts]
+  );
 
-  const allocTotal = allocationAccounts.reduce((sum, acc) => sum + (alloc[acc.slug] || 0), 0);
-  const allocOk = Math.abs(allocTotal - 1) < 0.0001;
+  const accountSlugs = useMemo(() => allocationAccounts.map((acc) => acc.slug), [allocationAccounts]);
+
+  const targetPercentages = useMemo(() => {
+    const map: Record<string, number> = {};
+    accountSlugs.forEach((slug) => {
+      map[slug] = percentStringToNumber(allocInputs[slug]);
+    });
+    return map;
+  }, [accountSlugs, allocInputs]);
+
+  const currentPercentages = useMemo(() => {
+    const map: Record<string, number> = {};
+    accountSlugs.forEach((slug) => {
+      const source = currentAllocInputs[slug] ?? allocInputs[slug];
+      map[slug] = percentStringToNumber(source);
+    });
+    return map;
+  }, [accountSlugs, allocInputs, currentAllocInputs]);
+
+  useEffect(() => {
+    if (rolloutHydrated) return;
+    if (!allocationAccounts.length) return;
+    const generated = generateRolloutRows(currentPercentages, targetPercentages, rolloutPlan.quarters, accountSlugs);
+    setRolloutRows(generated);
+    setRolloutHydrated(true);
+  }, [accountSlugs, allocationAccounts.length, currentPercentages, rolloutHydrated, rolloutPlan.quarters, targetPercentages]);
+
+  const allocTotalPct = accountSlugs.reduce((sum, slug) => sum + targetPercentages[slug], 0);
+  const allocOk = Math.abs(allocTotalPct - 100) < 0.1;
   const customAccountsRemaining = Math.max(0, CUSTOM_ACCOUNT_LIMIT - customAccounts.length);
+
+  const currentTotalPct = accountSlugs.reduce(
+    (sum, slug) => sum + percentStringToNumber(currentAllocInputs[slug] ?? allocInputs[slug]),
+    0
+  );
+  const currentAllocOk = Math.abs(currentTotalPct - 100) < 0.1;
+
+  const rolloutTotals = rolloutRows.map((row) =>
+    accountSlugs.reduce((sum, slug) => sum + percentStringToNumber(row.values[slug]), 0)
+  );
+  const rolloutValidity = rolloutTotals.map((total) => Math.abs(total - 100) < 0.1);
+  const rolloutHasError = rolloutValidity.some((valid) => !valid);
+
+  const handleRolloutCellChange = useCallback(
+    (quarterIndex: number, slug: string, value: string) => {
+      setRolloutRows((prev) => {
+        const next = prev.map((row) => ({
+          quarter: row.quarter,
+          values: { ...row.values },
+        }));
+        if (!next[quarterIndex]) return prev;
+        next[quarterIndex].values[slug] = value;
+        return recalcRolloutRows(next, quarterIndex, slug, targetPercentages);
+      });
+    },
+    [targetPercentages]
+  );
 
   const allocationSummary = describeAllocationCadence(allocationSettings);
   const profitDistributionLabel = formatLongDate(profitSettings.nextDistribution);
+  const taxRateDecimal = percentStringToDecimal(taxSettings.taxRate);
+  const estimatedPaidNumber = Number(taxSettings.estimatedPaid || 0);
+  const flatAmountNumber = Number(taxSettings.flatAmount || 0);
   const taxSummaryLabel =
     taxSettings.mode === "calculation"
-      ? `Calculated at ${(taxSettings.taxRate * 100).toFixed(1)}% less $${taxSettings.estimatedPaid.toLocaleString()} paid`
-      : `Flat $${taxSettings.flatAmount.toLocaleString()} split quarterly`;
+      ? `Calculated at ${(taxRateDecimal * 100).toFixed(1)}% less $${estimatedPaidNumber.toLocaleString()} paid`
+      : `Flat $${flatAmountNumber.toLocaleString()} split quarterly`;
   const menuSections = useMemo(
     () => [
       { id: "allocations", label: "Allocation targets", description: "Bucket percentages" },
@@ -442,7 +688,7 @@ export default function SettingsPage() {
                           allocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
                         }`}
                       >
-                        Total: {(allocTotal * 100).toFixed(1)}%
+                        Total: {allocTotalPct.toFixed(1)}%
                       </span>
                       <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
                         Custom accounts remaining: {customAccountsRemaining}
@@ -454,17 +700,81 @@ export default function SettingsPage() {
                         <div key={account.slug} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                           <div className="flex items-center justify-between text-sm font-medium text-slate-700">
                             <span>{account.name}</span>
-                            <span className="text-xs text-slate-500">{((alloc[account.slug] ?? 0) * 100).toFixed(1)}%</span>
+                            <span className="text-xs text-slate-500">{`${allocInputs[account.slug] || "0"}%`}</span>
                           </div>
-                          <input
-                            type="number"
-                            step={0.01}
-                            min={0}
-                            max={1}
-                            value={alloc[account.slug] ?? 0}
-                            onChange={(e) => setAlloc((prev) => ({ ...prev, [account.slug]: Number(e.target.value) }))}
-                            className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          />
+                          <div className="mt-2 flex items-center gap-2">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step={0.1}
+                              min={0}
+                              max={100}
+                              value={allocInputs[account.slug] ?? ""}
+                              onChange={(e) =>
+                                setAllocInputs((prev) => ({
+                                  ...prev,
+                                  [account.slug]: e.target.value,
+                                }))
+                              }
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                            />
+                            {account.source === "custom" && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!clientId) return;
+                                  if (!supabase) {
+                                    alert(
+                                      "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to delete accounts."
+                                    );
+                                    return;
+                                  }
+                                  const proceed = confirm(
+                                    `Delete custom account "${account.name}"? This will remove its allocations and rollout entries.`
+                                  );
+                                  if (!proceed) return;
+                                  const client = supabase;
+                                  try {
+                                    const { error: deleteError } = await client
+                                      .from("pf_accounts")
+                                      .delete()
+                                      .eq("client_id", clientId)
+                                      .eq("slug", account.slug);
+                                    if (deleteError) throw deleteError;
+                                    setAccounts((prev) => prev.filter((row) => row.slug !== account.slug));
+                                    setAllocInputs((prev) => {
+                                      const next = { ...prev };
+                                      delete next[account.slug];
+                                      return next;
+                                    });
+                                    setCurrentAllocInputs((prev) => {
+                                      const next = { ...prev };
+                                      delete next[account.slug];
+                                      return next;
+                                    });
+                                    setRolloutRows((prev) =>
+                                      prev.map((row) => ({
+                                        quarter: row.quarter,
+                                        values: Object.keys(row.values).reduce<PercentMap>((accum, slug) => {
+                                          if (slug !== account.slug) {
+                                            accum[slug] = row.values[slug];
+                                          }
+                                          return accum;
+                                        }, {}),
+                                      }))
+                                    );
+                                    setRolloutHydrated(false);
+                                  } catch (error) {
+                                    console.error("Unable to delete custom account", error);
+                                    alert("Failed to delete account. Check Supabase policies and try again.");
+                                  }
+                                }}
+                                className="rounded-lg border border-rose-200 px-2 py-2 text-xs font-semibold uppercase tracking-wide text-rose-600 hover:bg-rose-50"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -483,17 +793,20 @@ export default function SettingsPage() {
                           const client = supabase;
                           try {
                             await Promise.all(
-                              allocationAccounts.map((account) =>
-                                client.from("allocation_targets").upsert(
-                                  {
-                                    client_id: clientId,
-                                    effective_date: allocDate,
-                                    pf_slug: account.slug,
-                                    pct: alloc[account.slug] || 0,
-                                  },
-                                  { onConflict: "client_id, effective_date, pf_slug" }
-                                )
-                              )
+                              allocationAccounts.map(async (account) => {
+                                const { error: upsertError } = await client
+                                  .from("allocation_targets")
+                                  .upsert(
+                                    {
+                                      client_id: clientId,
+                                      effective_date: allocDate,
+                                      pf_slug: account.slug,
+                                      pct: percentStringToDecimal(allocInputs[account.slug]),
+                                    },
+                                    { onConflict: "client_id, effective_date, pf_slug" }
+                                  );
+                                if (upsertError) throw upsertError;
+                              })
                             );
                             alert("Allocations saved.");
                           } catch (err) {
@@ -593,20 +906,39 @@ export default function SettingsPage() {
                                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                   {idx === 0 ? "First" : "Second"} day
                                 </span>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={31}
-                                  value={day}
-                                  onChange={(e) =>
-                                    setAllocationSettings((prev) => {
-                                      const days = [...prev.semiMonthlyDays];
-                                      days[idx] = Number(e.target.value);
-                                      return { ...prev, semiMonthlyDays: days };
-                                    })
-                                  }
-                                  className="rounded-lg border border-slate-300 px-3 py-2"
-                                />
+                                <div className="flex gap-2">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={31}
+                                    value={day}
+                                    onChange={(e) =>
+                                      setAllocationSettings((prev) => {
+                                        const days = [...prev.semiMonthlyDays];
+                                        days[idx] = Number(e.target.value);
+                                        return { ...prev, semiMonthlyDays: days };
+                                      })
+                                    }
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                  />
+                                  <select
+                                    value={day}
+                                    onChange={(e) =>
+                                      setAllocationSettings((prev) => {
+                                        const days = [...prev.semiMonthlyDays];
+                                        days[idx] = Number(e.target.value);
+                                        return { ...prev, semiMonthlyDays: days };
+                                      })
+                                    }
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                                  >
+                                    {Array.from({ length: 31 }, (_, optionIdx) => optionIdx + 1).map((option) => (
+                                      <option key={option} value={option}>
+                                        {option}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
                               </label>
                             ))}
                           </div>
@@ -615,16 +947,31 @@ export default function SettingsPage() {
                         {allocationSettings.cadence === "monthly" && (
                           <label className="flex flex-col gap-1">
                             <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Day of month</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={31}
-                              value={allocationSettings.monthlyDay}
-                              onChange={(e) =>
-                                setAllocationSettings((prev) => ({ ...prev, monthlyDay: Number(e.target.value) }))
-                              }
-                              className="rounded-lg border border-slate-300 px-3 py-2"
-                            />
+                            <div className="flex gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                max={31}
+                                value={allocationSettings.monthlyDay}
+                                onChange={(e) =>
+                                  setAllocationSettings((prev) => ({ ...prev, monthlyDay: Number(e.target.value) }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                              <select
+                                value={allocationSettings.monthlyDay}
+                                onChange={(e) =>
+                                  setAllocationSettings((prev) => ({ ...prev, monthlyDay: Number(e.target.value) }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                              >
+                                {Array.from({ length: 31 }, (_, optionIdx) => optionIdx + 1).map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           </label>
                         )}
 
@@ -635,25 +982,275 @@ export default function SettingsPage() {
 
                   <section id="rollout" className="col-span-1">
                     <Card title="Rollout plan" subtitle="Ease into target allocations over several quarters.">
-                      <div className="space-y-4 text-sm text-slate-600">
+                      <div className="space-y-6 text-sm text-slate-600">
                         <p>
-                          Transition from current to target allocations over a defined number of quarters. Adjustments are split evenly
-                          across the plan.
+                          Transition from current to target allocations over a defined number of quarters. Adjustments start evenly but you can
+                          fine-tune each period.
                         </p>
-                        <label className="flex flex-col gap-1">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quarters</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={8}
-                            value={rolloutPlan.quarters}
-                            onChange={(e) => setRolloutPlan({ quarters: Number(e.target.value) })}
-                            className="rounded-lg border border-slate-300 px-3 py-2"
-                          />
-                        </label>
-                        <div className="rounded-2xl bg-slate-100 p-3 text-xs text-slate-600">
-                          Each quarter we increase allocations by approximately {((1 / Math.max(1, rolloutPlan.quarters)) * 100).toFixed(1)}%
-                          until targets are met.
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                          <label className="flex flex-col gap-1">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quarters</span>
+                            <select
+                              value={rolloutPlan.quarters}
+                              onChange={(e) => {
+                                const next = Number(e.target.value);
+                                if (!Number.isFinite(next) || next < 1) return;
+                                setRolloutPlan({ quarters: next });
+                                const generated = generateRolloutRows(
+                                  currentPercentages,
+                                  targetPercentages,
+                                  next,
+                                  accountSlugs
+                                );
+                                setRolloutRows(generated);
+                                setRolloutHydrated(true);
+                              }}
+                              className="rounded-lg border border-slate-300 px-3 py-2"
+                            >
+                              {Array.from({ length: 8 }, (_, idx) => idx + 1).map((option) => (
+                                <option key={option} value={option}>
+                                  {option} {option === 1 ? "quarter" : "quarters"}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                currentAllocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                              }`}
+                            >
+                              Current total: {currentTotalPct.toFixed(1)}%
+                            </span>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                rolloutRows.length === 0
+                                  ? "bg-slate-100 text-slate-600"
+                                  : rolloutHasError
+                                  ? "bg-orange-100 text-orange-700"
+                                  : "bg-emerald-100 text-emerald-700"
+                              }`}
+                            >
+                              {rolloutRows.length === 0
+                                ? "No rollout generated"
+                                : rolloutHasError
+                                ? "Rollout totals need attention"
+                                : "Rollout totals balance at 100%"}
+                            </span>
+                            <Button
+                              onClick={() => {
+                                const generated = generateRolloutRows(
+                                  currentPercentages,
+                                  targetPercentages,
+                                  rolloutPlan.quarters,
+                                  accountSlugs
+                                );
+                                setRolloutRows(generated);
+                                setRolloutHydrated(true);
+                              }}
+                            >
+                              Recalculate plan
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-slate-700">Current allocation baseline</h3>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                currentAllocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                              }`}
+                            >
+                              Total: {currentTotalPct.toFixed(1)}%
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Update the starting percentages for each account, then recalculate to rebuild the rollout plan.
+                          </p>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            {allocationAccounts.map((account) => (
+                              <div key={account.slug} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                                <div className="flex items-center justify-between text-sm font-medium text-slate-700">
+                                  <span>{account.name}</span>
+                                  <span className="text-xs text-slate-500">
+                                    {`${currentAllocInputs[account.slug] ?? allocInputs[account.slug] ?? "0"}%`}
+                                  </span>
+                                </div>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step={0.1}
+                                  min={0}
+                                  max={100}
+                                  value={currentAllocInputs[account.slug] ?? ""}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setCurrentAllocInputs((prev) => ({ ...prev, [account.slug]: value }));
+                                  }}
+                                  className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-slate-700">Quarterly rollout</h3>
+                            {rolloutHasError && (
+                              <span className="text-xs font-semibold text-rose-600">
+                                Totals must equal 100% each quarter.
+                              </span>
+                            )}
+                          </div>
+                          {rolloutRows.length ? (
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full table-fixed border-separate border-spacing-y-2">
+                                <thead>
+                                  <tr>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      Account
+                                    </th>
+                                    {rolloutRows.map((row, idx) => (
+                                      <th
+                                        key={row.quarter}
+                                        className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500"
+                                      >
+                                        Q{idx + 1}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {allocationAccounts.map((account) => (
+                                    <tr key={account.slug}>
+                                      <th
+                                        scope="row"
+                                        className="whitespace-nowrap px-3 py-2 text-left text-sm font-medium text-slate-700"
+                                      >
+                                        {account.name}
+                                      </th>
+                                      {rolloutRows.map((row, rowIdx) => (
+                                        <td key={`${account.slug}-${row.quarter}`} className="px-3 py-2">
+                                          <input
+                                            type="number"
+                                            inputMode="decimal"
+                                            step={0.1}
+                                            min={0}
+                                            max={100}
+                                            value={row.values[account.slug] ?? ""}
+                                            onChange={(e) => handleRolloutCellChange(rowIdx, account.slug, e.target.value)}
+                                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                                          />
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr>
+                                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      Totals
+                                    </th>
+                                    {rolloutRows.map((row, idx) => (
+                                      <td key={`total-${row.quarter}`} className="px-3 py-2 text-center">
+                                        <div
+                                          className={`inline-flex items-center justify-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold ${
+                                            rolloutValidity[idx]
+                                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                              : "border-rose-200 bg-rose-50 text-rose-600"
+                                          }`}
+                                        >
+                                          {rolloutTotals[idx].toFixed(1)}%
+                                          {rolloutValidity[idx] ? "✔" : "!"}
+                                        </div>
+                                      </td>
+                                    ))}
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-xs text-slate-500">
+                              Configure quarters to generate a rollout plan.
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <Button
+                            disabled={!clientId || !currentAllocOk || rolloutHasError}
+                            onClick={async () => {
+                              if (!clientId || !supabase) {
+                                alert(
+                                  "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to save the rollout plan."
+                                );
+                                return;
+                              }
+                              if (!currentAllocOk) {
+                                alert("Current allocations must total 100% before saving the rollout plan.");
+                                return;
+                              }
+                              if (rolloutHasError) {
+                                alert("Each quarter must total 100% before saving.");
+                                return;
+                              }
+                              const client = supabase;
+                              try {
+                                const { error: currentError } = await client
+                                  .from("allocation_current")
+                                  .upsert(
+                                    accountSlugs.map((slug) => ({
+                                      client_id: clientId,
+                                      pf_slug: slug,
+                                      pct: percentStringToDecimal(currentAllocInputs[slug] ?? allocInputs[slug]),
+                                    })),
+                                    { onConflict: "client_id,pf_slug" }
+                                  );
+                                if (currentError) throw currentError;
+
+                                const { error: deleteError } = await client
+                                  .from("allocation_rollout_steps")
+                                  .delete()
+                                  .eq("client_id", clientId);
+                                if (deleteError) throw deleteError;
+
+                                if (rolloutRows.length) {
+                                  const { error: insertError } = await client
+                                    .from("allocation_rollout_steps")
+                                    .insert(
+                                      rolloutRows.flatMap((row, idx) =>
+                                        accountSlugs.map((slug) => ({
+                                          client_id: clientId,
+                                          quarter_index: idx + 1,
+                                          pf_slug: slug,
+                                          pct: percentStringToDecimal(row.values[slug]),
+                                        }))
+                                      )
+                                    );
+                                  if (insertError) throw insertError;
+                                }
+
+                                alert("Rollout plan saved.");
+                              } catch (error: any) {
+                                console.error("Unable to save rollout plan", error);
+                                if (error?.code === "42P01") {
+                                  alert(
+                                    "Run the latest Supabase migration to add allocation_current and allocation_rollout_steps tables."
+                                  );
+                                } else {
+                                  alert("Failed to save rollout plan. Check Supabase policies and try again.");
+                                }
+                              }
+                            }}
+                            className={`border-blue-600 bg-blue-600 text-white hover:bg-blue-500 ${
+                              !clientId || !currentAllocOk || rolloutHasError ? "cursor-not-allowed opacity-60" : ""
+                            }`}
+                          >
+                            Save rollout plan
+                          </Button>
+                          <Button onClick={() => clientId && loadClientData(clientId)}>Refresh rollout data</Button>
                         </div>
                       </div>
                     </Card>
@@ -670,8 +1267,10 @@ export default function SettingsPage() {
                               min={0}
                               max={100}
                               step={1}
-                              value={Math.round(profitSettings.bonusPct * 100)}
-                              onChange={(e) => setProfitSettings((prev) => ({ ...prev, bonusPct: Number(e.target.value) / 100 }))}
+                              value={profitSettings.bonusPct}
+                              onChange={(e) =>
+                                setProfitSettings((prev) => ({ ...prev, bonusPct: e.target.value }))
+                              }
                               className="rounded-lg border border-slate-300 px-3 py-2"
                             />
                           </label>
@@ -682,8 +1281,10 @@ export default function SettingsPage() {
                               min={0}
                               max={100}
                               step={1}
-                              value={Math.round(profitSettings.vaultPct * 100)}
-                              onChange={(e) => setProfitSettings((prev) => ({ ...prev, vaultPct: Number(e.target.value) / 100 }))}
+                              value={profitSettings.vaultPct}
+                              onChange={(e) =>
+                                setProfitSettings((prev) => ({ ...prev, vaultPct: e.target.value }))
+                              }
                               className="rounded-lg border border-slate-300 px-3 py-2"
                             />
                           </label>
@@ -746,8 +1347,10 @@ export default function SettingsPage() {
                                 min={0}
                                 max={100}
                                 step={0.5}
-                                value={taxSettings.taxRate * 100}
-                                onChange={(e) => setTaxSettings((prev) => ({ ...prev, taxRate: Number(e.target.value) / 100 }))}
+                                value={taxSettings.taxRate}
+                                onChange={(e) =>
+                                  setTaxSettings((prev) => ({ ...prev, taxRate: e.target.value }))
+                                }
                                 className="rounded-lg border border-slate-300 px-3 py-2"
                               />
                             </label>
@@ -759,7 +1362,9 @@ export default function SettingsPage() {
                                 type="number"
                                 min={0}
                                 value={taxSettings.estimatedPaid}
-                                onChange={(e) => setTaxSettings((prev) => ({ ...prev, estimatedPaid: Number(e.target.value) }))}
+                                onChange={(e) =>
+                                  setTaxSettings((prev) => ({ ...prev, estimatedPaid: e.target.value }))
+                                }
                                 className="rounded-lg border border-slate-300 px-3 py-2"
                               />
                             </label>
@@ -771,7 +1376,9 @@ export default function SettingsPage() {
                               type="number"
                               min={0}
                               value={taxSettings.flatAmount}
-                              onChange={(e) => setTaxSettings((prev) => ({ ...prev, flatAmount: Number(e.target.value) }))}
+                              onChange={(e) =>
+                                setTaxSettings((prev) => ({ ...prev, flatAmount: e.target.value }))
+                              }
                               className="rounded-lg border border-slate-300 px-3 py-2"
                             />
                           </label>
@@ -784,8 +1391,10 @@ export default function SettingsPage() {
                             min={0}
                             max={100}
                             step={1}
-                            value={Math.round(taxSettings.vaultPct * 100)}
-                            onChange={(e) => setTaxSettings((prev) => ({ ...prev, vaultPct: Number(e.target.value) / 100 }))}
+                            value={taxSettings.vaultPct}
+                            onChange={(e) =>
+                              setTaxSettings((prev) => ({ ...prev, vaultPct: e.target.value }))
+                            }
                             className="rounded-lg border border-slate-300 px-3 py-2"
                           />
                         </label>

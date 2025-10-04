@@ -27,6 +27,8 @@ The UI reads and writes to several Supabase tables:
 - `pf_accounts` – stores the core and custom Profit First accounts per client.【F:app/page.tsx†L198-L214】【F:app/page.tsx†L528-L552】
 - `coa_to_pf_map` – links chart-of-account ids to Profit First buckets for drill-down reporting.【F:app/page.tsx†L207-L214】【F:app/page.tsx†L404-L419】
 - `allocation_targets` – persists the target allocation percentages by effective date.【F:app/page.tsx†L216-L241】【F:app/page.tsx†L840-L872】
+- `allocation_current` – tracks the client's current baseline percentages that seed rollout recommendations.【F:app/settings/page.tsx†L308-L344】【F:app/settings/page.tsx†L1201-L1208】【F:docs/supabase-schema.sql†L75-L102】
+- `allocation_rollout_steps` – stores the quarter-by-quarter plan that transitions from current to target allocations.【F:app/settings/page.tsx†L346-L360】【F:app/settings/page.tsx†L1213-L1232】【F:docs/supabase-schema.sql†L104-L132】
 - `v_monthly_activity_long` – view returning monthly net activity per Profit First account.【F:app/page.tsx†L234-L241】【F:app/page.tsx†L272-L323】
 - `v_pf_balances_long` – view returning month-end balances per Profit First account.【F:app/page.tsx†L239-L241】【F:app/page.tsx†L296-L338】
 - `v_proj_occurrences` – view powering the inflow/outflow breakdown in the drill-down panel.【F:app/page.tsx†L404-L419】【F:app/page.tsx†L1384-L1426】

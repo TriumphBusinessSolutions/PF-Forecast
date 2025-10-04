@@ -14,6 +14,13 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { getSupabaseClient } from "../lib/supabase";
+// ✅ Show an on-screen warning if Supabase environment variables are missing
+const supabaseConfigured =
+  Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+const SUPABASE_ENV_MESSAGE =
+  "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel → Project → Settings → Environment Variables, then redeploy.";
+
 
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };

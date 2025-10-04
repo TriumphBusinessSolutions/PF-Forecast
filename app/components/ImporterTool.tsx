@@ -42,9 +42,10 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
   const parseAndSet = useCallback(
     (input: string) => {
       const parsed = parseStatement(input);
-      if (parsed.rows.length === 0) {
+      if (parsed.rows.length === 0 || parsed.months.length === 0) {
         setError(
-          'No rows were detected. Please provide a CSV/TSV cash-basis P&L with at least one account.'
+          parsed.warnings[0] ??
+            'No rows were detected. Please provide a CSV/TSV cash-basis P&L with at least one account.'
         );
         setStatement(null);
         return false;
@@ -486,37 +487,73 @@ function parseStatement(raw: string): ParsedStatement {
 
   const lines = trimmed.split(/\r?\n/).filter((ln) => ln.trim().length > 0);
   if (lines.length < 2) {
+    warnings.push('The uploaded statement does not contain any rows.');
     return { months: [], rows: [], warnings };
   }
 
-  const headerLine = lines[0];
-  const delimiter = selectDelimiter(headerLine);
-  const header = splitDelimited(headerLine, delimiter).map((h) => h.trim());
-  const rawMonthHeaders = header.slice(1);
-  const monthHeaders = rawMonthHeaders.map((m) => normaliseMonth(m));
+  let headerIndex = -1;
+  let delimiter = ',';
+  let rawMonthHeaders: string[] = [];
+  let monthHeaders: (string | null)[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const candidateDelimiter = selectDelimiter(lines[i]);
+    const parts = splitDelimited(lines[i], candidateDelimiter).map((h) => h.trim());
+    if (parts.length < 2) continue;
+    const rawMonths = parts.slice(1);
+    const normalised = rawMonths.map((m) => normaliseMonth(m));
+    const valid = normalised.filter((m): m is string => Boolean(m));
+    if (valid.length >= 3) {
+      headerIndex = i;
+      delimiter = candidateDelimiter;
+      rawMonthHeaders = rawMonths;
+      monthHeaders = normalised;
+      break;
+    }
+  }
+
+  if (headerIndex === -1) {
+    warnings.push('Could not find a header row with monthly columns. Please ensure the report includes month headings.');
+    return { months: [], rows: [], warnings };
+  }
+
+  if (headerIndex > 0) {
+    warnings.push('Skipped heading rows before the data table.');
+  }
+
   const validMonthHeaders = monthHeaders.filter((m): m is string => Boolean(m));
 
   if (validMonthHeaders.length === 0) {
-    return { months: [], rows: [], warnings: ['No month columns detected.'] };
+    warnings.push('No month columns detected.');
+    return { months: [], rows: [], warnings };
   }
 
   if (validMonthHeaders.length !== rawMonthHeaders.length) {
     warnings.push('Some columns were skipped because the month could not be understood.');
   }
 
-  const uniqueMonths = Array.from(new Set(validMonthHeaders)).sort((a, b) => monthSort(a) - monthSort(b));
-  if (uniqueMonths.length > 12) {
+  const months: string[] = [];
+  validMonthHeaders.forEach((m) => {
+    if (!months.includes(m)) {
+      months.push(m);
+    }
+  });
+
+  if (months.length > 12) {
     warnings.push('More than 12 months detected. Using the most recent twelve.');
   }
-  const months = uniqueMonths.slice(-12);
 
+  const limitedMonths = months
+    .slice(-12)
+    .sort((a, b) => monthSort(a) - monthSort(b));
+  const dataLines = lines.slice(headerIndex + 1);
   const rows: ParsedRow[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
-    const parts = splitDelimited(lines[i], delimiter);
-    if (!parts.length) continue;
+  dataLines.forEach((line) => {
+    const parts = splitDelimited(line, delimiter);
+    if (!parts.length) return;
     const name = parts[0]?.trim();
-    if (!name) continue;
+    if (!name) return;
 
     const monthly: Record<string, number> = {};
     parts.slice(1).forEach((value, idx) => {
@@ -527,18 +564,35 @@ function parseStatement(raw: string): ParsedStatement {
       monthly[month] = num;
     });
 
-    const total = months.reduce((sum, month) => sum + (monthly[month] ?? 0), 0);
+    if (Object.keys(monthly).length === 0) {
+      return;
+    }
+
+    const total = limitedMonths.reduce((sum, month) => sum + (monthly[month] ?? 0), 0);
     rows.push({ name, monthly, total });
+  });
+
+  if (rows.length === 0) {
+    warnings.push('No account rows with values were detected.');
   }
 
-  return { months, rows, warnings };
+  return { months: limitedMonths, rows, warnings };
 }
 
 function parseCurrency(value: string): number {
-  const cleaned = value.replace(/[^0-9\-\.]/g, '');
-  if (cleaned === '' || cleaned === '-' || cleaned === '.') return 0;
-  const num = Number(cleaned);
-  return Number.isFinite(num) ? num : 0;
+  const raw = value.trim();
+  if (!raw) return 0;
+  const negativeByParens = /^\(.*\)$/.test(raw);
+  const negativeBySuffix = /-$/.test(raw);
+  const cleaned = raw.replace(/[\s,]/g, '').replace(/[()]/g, '');
+  const normalized = negativeBySuffix ? cleaned.replace(/-$/, '') : cleaned;
+  if (normalized === '' || normalized === '-' || normalized === '.') return 0;
+  let num = Number(normalized);
+  if (!Number.isFinite(num)) return 0;
+  if (negativeByParens || negativeBySuffix) {
+    num = -Math.abs(num);
+  }
+  return num;
 }
 
 function selectDelimiter(line: string): string {
@@ -584,14 +638,17 @@ function normaliseMonth(input: string): string | null {
   if (isoMatch) {
     const year = Number(isoMatch[1]);
     const month = Number(isoMatch[2]);
-    if (month >= 1 && month <= 12) {
+    if (month >= 1 && month <= 12 && year >= 2000 && year <= 2100) {
       return `${year}-${String(month).padStart(2, '0')}`;
     }
   }
 
   const parsed = new Date(trimmed);
   if (!Number.isNaN(parsed.valueOf())) {
-    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+    const year = parsed.getFullYear();
+    if (year >= 2000 && year <= 2100) {
+      return `${year}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
+    }
   }
 
   return null;

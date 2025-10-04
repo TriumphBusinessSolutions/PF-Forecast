@@ -124,21 +124,17 @@ const AuthView: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen w-full items-center justify-center overflow-hidden bg-slate-950 px-4 py-16 sm:px-6">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.35),_transparent_60%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_rgba(16,185,129,0.25),_transparent_55%)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(120deg,_rgba(148,163,184,0.18)_1px,_transparent_0)] bg-[length:40px_40px] opacity-20" />
-        <svg
-          viewBox="0 0 600 400"
-          className="absolute -right-24 top-16 w-[520px] text-sky-400/35"
-          aria-hidden="true"
-        >
+    <div className="auth-root">
+      <div className="auth-artwork" aria-hidden="true">
+        <div className="auth-radial auth-radial--top" />
+        <div className="auth-radial auth-radial--bottom" />
+        <div className="auth-grid" />
+        <svg viewBox="0 0 600 400" className="auth-chart">
           <path
             d="M0 320L60 260L120 280L180 210L240 240L300 150L360 210L420 120L480 190L540 110L600 160"
             fill="none"
             stroke="currentColor"
-            strokeWidth="8"
+            strokeWidth={8}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -147,39 +143,35 @@ const AuthView: React.FC = () => {
               <rect
                 x={x - 6}
                 y={i % 2 === 0 ? 200 : 140}
-                width="12"
+                width={12}
                 height={i % 2 === 0 ? 90 : 120}
-                rx="3"
+                rx={3}
                 fill="currentColor"
-                opacity="0.4"
+                opacity={0.4}
               />
-              <circle cx={x} cy={i % 2 === 0 ? 260 : 150} r="7" fill="currentColor" />
+              <circle cx={x} cy={i % 2 === 0 ? 260 : 150} r={7} fill="currentColor" />
             </g>
           ))}
         </svg>
-        <div className="absolute -left-20 top-12 h-64 w-64 rounded-full bg-emerald-500/30 blur-3xl" />
-        <div className="absolute bottom-0 left-1/2 h-48 w-[140%] -translate-x-1/2 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
+        <div className="auth-glow auth-glow--emerald" />
+        <div className="auth-glow auth-glow--base" />
       </div>
 
-      <div className="relative z-10 w-full max-w-lg px-2 sm:px-4">
-        <div className="rounded-[32px] border border-white/20 bg-white/90 p-8 text-slate-900 shadow-[0_40px_90px_-30px_rgba(15,23,42,0.85)] backdrop-blur-xl sm:p-10">
-          <div className="space-y-3 text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.45em] text-slate-500">Profit First Forecast</p>
-            <h1 className="text-3xl font-semibold text-slate-900">
-              {mode === "sign-in" ? "Welcome back" : "Create your account"}
-            </h1>
-            <p className="text-sm text-slate-600">
+      <div className="auth-card-wrapper">
+        <div className="auth-card">
+          <div className="auth-copy">
+            <p className="auth-kicker">Profit First Forecast</p>
+            <h1 className="auth-title">{mode === "sign-in" ? "Welcome back" : "Create your account"}</h1>
+            <p className="auth-subtitle">
               {mode === "sign-in"
                 ? "Sign in to review client performance and update allocations."
                 : "Set up your workspace so you can start onboarding clients."}
             </p>
           </div>
 
-          <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
-            <div className="space-y-2">
-              <label htmlFor="authEmail" className="text-sm font-medium text-slate-700">
-                Email
-              </label>
+          <form className="auth-form" onSubmit={handleSubmit}>
+            <label className="auth-field" htmlFor="authEmail">
+              <span className="auth-label">Email</span>
               <input
                 id="authEmail"
                 type="email"
@@ -187,13 +179,11 @@ const AuthView: React.FC = () => {
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                className="auth-input"
               />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="authPassword" className="text-sm font-medium text-slate-700">
-                Password
-              </label>
+            </label>
+            <label className="auth-field" htmlFor="authPassword">
+              <span className="auth-label">Password</span>
               <input
                 id="authPassword"
                 type="password"
@@ -202,45 +192,29 @@ const AuthView: React.FC = () => {
                 autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                className="auth-input"
               />
-            </div>
+            </label>
             {message && (
-              <p
-                className={`text-sm ${
-                  message.type === "error" ? "text-red-600" : "text-emerald-600"
-                }`}
-              >
+              <p className={`auth-message ${message.type === "error" ? "auth-message--error" : "auth-message--success"}`}>
                 {message.text}
               </p>
             )}
-            <Button
-              type="submit"
-              disabled={loading}
-              className="mt-2 w-full !rounded-xl !border-transparent !bg-sky-500 !py-3 !text-base !font-semibold !text-white hover:!bg-sky-600"
-            >
+            <button type="submit" className="auth-submit" disabled={loading}>
               {loading ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
-            </Button>
-            <p className="text-center text-sm text-slate-500">
+            </button>
+            <p className="auth-switch">
               {mode === "sign-in" ? (
                 <>
                   Don&apos;t have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => switchMode("sign-up")}
-                    className="font-medium text-sky-600 hover:text-sky-700"
-                  >
+                  <button type="button" onClick={() => switchMode("sign-up")}>
                     Sign up
                   </button>
                 </>
               ) : (
                 <>
                   Already have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => switchMode("sign-in")}
-                    className="font-medium text-sky-600 hover:text-sky-700"
-                  >
+                  <button type="button" onClick={() => switchMode("sign-in")}>
                     Sign in
                   </button>
                 </>
@@ -249,6 +223,192 @@ const AuthView: React.FC = () => {
           </form>
         </div>
       </div>
+
+      <style jsx>{`
+        .auth-root {
+          position: relative;
+          display: flex;
+          min-height: 100vh;
+          width: 100%;
+          align-items: center;
+          justify-content: center;
+          padding: 64px 16px;
+          background: #020617;
+          overflow: hidden;
+        }
+        @media (min-width: 640px) {
+          .auth-root {
+            padding: 80px 24px;
+          }
+        }
+        .auth-artwork {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+        }
+        .auth-radial {
+          position: absolute;
+          inset: 0;
+        }
+        .auth-radial--top {
+          background: radial-gradient(circle at top, rgba(37, 99, 235, 0.35), transparent 60%);
+        }
+        .auth-radial--bottom {
+          background: radial-gradient(circle at bottom, rgba(16, 185, 129, 0.25), transparent 55%);
+        }
+        .auth-grid {
+          position: absolute;
+          inset: 0;
+          background-image: linear-gradient(120deg, rgba(148, 163, 184, 0.18) 1px, transparent 0);
+          background-size: 40px 40px;
+          opacity: 0.18;
+        }
+        .auth-chart {
+          position: absolute;
+          right: -96px;
+          top: 64px;
+          width: 520px;
+          color: rgba(56, 189, 248, 0.35);
+        }
+        .auth-glow {
+          position: absolute;
+          border-radius: 9999px;
+          filter: blur(96px);
+        }
+        .auth-glow--emerald {
+          left: -80px;
+          top: 48px;
+          width: 256px;
+          height: 256px;
+          background: rgba(16, 185, 129, 0.3);
+        }
+        .auth-glow--base {
+          left: 50%;
+          bottom: 0;
+          width: 140%;
+          height: 192px;
+          transform: translateX(-50%);
+          background: linear-gradient(to top, rgba(2, 6, 23, 0.95), rgba(2, 6, 23, 0.4), transparent);
+        }
+        .auth-card-wrapper {
+          position: relative;
+          z-index: 10;
+          width: 100%;
+          max-width: 520px;
+          padding: 0 12px;
+        }
+        .auth-card {
+          border-radius: 28px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          background: rgba(255, 255, 255, 0.92);
+          padding: 48px 40px;
+          color: #0f172a;
+          box-shadow: 0 40px 90px -30px rgba(15, 23, 42, 0.85);
+          backdrop-filter: blur(22px);
+        }
+        @media (max-width: 520px) {
+          .auth-card {
+            padding: 40px 28px;
+          }
+        }
+        .auth-copy {
+          text-align: center;
+        }
+        .auth-kicker {
+          font-size: 11px;
+          letter-spacing: 0.45em;
+          text-transform: uppercase;
+          font-weight: 600;
+          color: #64748b;
+          margin-bottom: 12px;
+        }
+        .auth-title {
+          font-size: 32px;
+          margin: 0;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .auth-subtitle {
+          margin-top: 12px;
+          font-size: 14px;
+          color: #475569;
+        }
+        .auth-form {
+          margin-top: 32px;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+        .auth-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 14px;
+        }
+        .auth-label {
+          font-weight: 500;
+          color: #1e293b;
+        }
+        .auth-input {
+          border-radius: 14px;
+          border: 1px solid #cbd5f5;
+          padding: 12px 16px;
+          font-size: 14px;
+          color: #0f172a;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .auth-input:focus {
+          outline: none;
+          border-color: #38bdf8;
+          box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+        }
+        .auth-message {
+          font-size: 14px;
+        }
+        .auth-message--error {
+          color: #dc2626;
+        }
+        .auth-message--success {
+          color: #059669;
+        }
+        .auth-submit {
+          margin-top: 4px;
+          width: 100%;
+          border: none;
+          border-radius: 16px;
+          padding: 14px 16px;
+          font-size: 16px;
+          font-weight: 600;
+          background: linear-gradient(135deg, #0ea5e9, #2563eb);
+          color: #fff;
+          cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .auth-submit:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        .auth-submit:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow: 0 16px 32px -20px rgba(37, 99, 235, 0.9);
+        }
+        .auth-switch {
+          text-align: center;
+          font-size: 14px;
+          color: #64748b;
+        }
+        .auth-switch button {
+          background: none;
+          border: none;
+          color: #0ea5e9;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .auth-switch button:hover {
+          text-decoration: underline;
+        }
+      `}</style>
     </div>
   );
 };

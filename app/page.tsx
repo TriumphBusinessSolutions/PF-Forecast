@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Head from "next/head";
 import {
@@ -107,7 +107,42 @@ const AuthView: React.FC = () => {
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [signupStep, setSignupStep] = useState<"plans" | "form">("form");
   const [selectedPlan, setSelectedPlan] = useState<string>(MEMBERSHIP_PLANS[0]?.id ?? "launch");
-  const supabaseConfigured = Boolean(supabase);
+  const [tilt, setTilt] = useState({ x: 0, y: 0, intensity: 0 });
+  const [glow, setGlow] = useState({ x: 50, y: 50 });
+  const [parallax, setParallax] = useState({ x: 0, y: 0 });
+
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const offsetX = event.clientX - bounds.left;
+    const offsetY = event.clientY - bounds.top;
+    const xRatio = Math.min(Math.max(offsetX / bounds.width, 0), 1);
+    const yRatio = Math.min(Math.max(offsetY / bounds.height, 0), 1);
+    const rotateX = (yRatio - 0.5) * 12;
+    const rotateY = (xRatio - 0.5) * -16;
+    setTilt({ x: rotateX, y: rotateY, intensity: 1 });
+    setGlow({ x: xRatio * 100, y: yRatio * 100 });
+    setParallax({ x: (xRatio - 0.5) * 14, y: (yRatio - 0.5) * 10 });
+  }, []);
+
+  const handlePointerLeave = useCallback(() => {
+    setTilt({ x: 0, y: 0, intensity: 0 });
+    setGlow({ x: 50, y: 50 });
+    setParallax({ x: 0, y: 0 });
+  }, []);
+
+  const motionStyle = useMemo(
+    () =>
+      ({
+        ["--tilt-x" as any]: `${tilt.x.toFixed(2)}deg`,
+        ["--tilt-y" as any]: `${tilt.y.toFixed(2)}deg`,
+        ["--tilt-intensity" as any]: `${tilt.intensity.toFixed(2)}`,
+        ["--glow-x" as any]: `${glow.x.toFixed(2)}%`,
+        ["--glow-y" as any]: `${glow.y.toFixed(2)}%`,
+        ["--parallax-x" as any]: `${parallax.x.toFixed(2)}`,
+        ["--parallax-y" as any]: `${parallax.y.toFixed(2)}`,
+      }) as React.CSSProperties,
+    [glow.x, glow.y, parallax.x, parallax.y, tilt.intensity, tilt.x, tilt.y],
+  );
 
   const selectedPlanMeta = useMemo(
     () => MEMBERSHIP_PLANS.find((plan) => plan.id === selectedPlan) ?? MEMBERSHIP_PLANS[0],
@@ -165,11 +200,26 @@ const AuthView: React.FC = () => {
   const showPlanStep = mode === "sign-up" && signupStep === "plans";
 
   return (
-    <div className="auth-root">
+    <div
+      className="auth-root"
+      style={motionStyle}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+    >
       <div className="auth-artwork" aria-hidden="true">
         <div className="auth-radial auth-radial--top" />
         <div className="auth-radial auth-radial--bottom" />
         <div className="auth-grid" />
+        <div className="auth-orb auth-orb--one" />
+        <div className="auth-orb auth-orb--two" />
+        <div className="auth-orb auth-orb--three" />
+        <div className="auth-lion">
+          <div className="auth-lion__mane" />
+          <div className="auth-lion__face" />
+          <div className="auth-lion__eyes" />
+          <div className="auth-lion__snout" />
+          <div className="auth-lion__crown" />
+        </div>
         <svg viewBox="0 0 600 400" className="auth-chart">
           <path
             d="M0 320L60 260L120 280L180 210L240 240L300 150L360 210L420 120L480 190L540 110L600 160"
@@ -337,8 +387,42 @@ const AuthView: React.FC = () => {
           align-items: center;
           justify-content: center;
           padding: 64px 16px;
-          background: #020617;
+          background: radial-gradient(circle at 18% -12%, rgba(250, 145, 0, 0.46), transparent 62%),
+            radial-gradient(circle at 80% 120%, rgba(0, 74, 173, 0.65), rgba(2, 6, 23, 0.94) 68%),
+            linear-gradient(160deg, #020617 10%, #071630 48%, #112347 100%);
           overflow: hidden;
+          perspective: 1600px;
+          color: #f8fafc;
+        }
+        .auth-root::before {
+          content: "";
+          position: absolute;
+          inset: -25%;
+          background: conic-gradient(
+            from 140deg,
+            rgba(0, 74, 173, 0.36),
+            rgba(15, 23, 42, 0.15),
+            rgba(250, 145, 0, 0.28),
+            rgba(15, 23, 42, 0.28)
+          );
+          filter: blur(160px);
+          opacity: 0.75;
+          pointer-events: none;
+        }
+        .auth-root::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(
+              circle at var(--glow-x, 50%) var(--glow-y, 50%),
+              rgba(250, 145, 0, 0.14),
+              transparent 68%
+            ),
+            radial-gradient(circle at 20% 20%, rgba(56, 189, 248, 0.18), transparent 62%);
+          mix-blend-mode: screen;
+          opacity: 0.9;
+          pointer-events: none;
+          transition: opacity 0.4s ease;
         }
         @media (min-width: 640px) {
           .auth-root {
@@ -349,6 +433,12 @@ const AuthView: React.FC = () => {
           position: absolute;
           inset: 0;
           pointer-events: none;
+          transform: translate3d(
+            calc(var(--parallax-x, 0) * 6px),
+            calc(var(--parallax-y, 0) * 4px),
+            0
+          );
+          transition: transform 0.35s ease;
         }
         .auth-radial {
           position: absolute;
@@ -363,16 +453,189 @@ const AuthView: React.FC = () => {
         .auth-grid {
           position: absolute;
           inset: 0;
-          background-image: linear-gradient(120deg, rgba(148, 163, 184, 0.18) 1px, transparent 0);
-          background-size: 40px 40px;
-          opacity: 0.18;
+          background-image:
+            linear-gradient(120deg, rgba(148, 163, 184, 0.14) 1px, transparent 0),
+            linear-gradient(0deg, rgba(148, 163, 184, 0.12) 1px, transparent 0);
+          background-size: 40px 40px, 60px 60px;
+          opacity: 0.2;
+          transform: translate3d(
+              calc(var(--parallax-x, 0) * -8px),
+              calc(var(--parallax-y, 0) * -6px),
+              0
+            )
+            scale(1.05);
+          transition: transform 0.4s ease;
+        }
+        .auth-orb {
+          position: absolute;
+          border-radius: 9999px;
+          filter: blur(0);
+          opacity: 0.35;
+          transform: translate3d(
+            calc(var(--parallax-x, 0) * -10px),
+            calc(var(--parallax-y, 0) * -8px),
+            0
+          );
+          transition: transform 0.5s ease;
+          animation: auth-orb-float 14s ease-in-out infinite;
+        }
+        .auth-orb--one {
+          top: -160px;
+          right: -120px;
+          width: 420px;
+          height: 420px;
+          background: radial-gradient(circle at 30% 30%, rgba(56, 189, 248, 0.45), transparent 70%);
+          box-shadow: 0 45px 120px -40px rgba(14, 116, 144, 0.6);
+          animation-delay: -2s;
+        }
+        .auth-orb--two {
+          bottom: -140px;
+          left: -140px;
+          width: 360px;
+          height: 360px;
+          background: radial-gradient(circle at 60% 40%, rgba(250, 204, 21, 0.4), transparent 75%);
+          box-shadow: 0 55px 140px -50px rgba(161, 98, 7, 0.6);
+          animation-delay: 1.5s;
+        }
+        .auth-orb--three {
+          top: 20%;
+          left: 45%;
+          width: 240px;
+          height: 240px;
+          background: radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.42), transparent 70%);
+          box-shadow: 0 35px 110px -50px rgba(6, 95, 70, 0.6);
+          animation-delay: -4s;
+        }
+        @keyframes auth-orb-float {
+          0%,
+          100% {
+            transform: translate3d(
+              calc(var(--parallax-x, 0) * -10px),
+              calc(var(--parallax-y, 0) * -8px),
+              0
+            );
+          }
+          50% {
+            transform: translate3d(
+                calc(var(--parallax-x, 0) * -6px),
+                calc(var(--parallax-y, 0) * -4px),
+                0
+              )
+              translateY(-28px);
+          }
         }
         .auth-chart {
           position: absolute;
           right: -96px;
           top: 64px;
           width: 520px;
-          color: rgba(56, 189, 248, 0.35);
+          color: rgba(56, 189, 248, 0.42);
+        }
+        .auth-lion {
+          position: absolute;
+          bottom: -120px;
+          left: -100px;
+          width: 420px;
+          height: 420px;
+          display: grid;
+          place-items: center;
+          transform: rotate(-8deg);
+          opacity: 0.85;
+        }
+        .auth-lion__mane {
+          width: 100%;
+          height: 100%;
+          border-radius: 48% 52% 55% 45% / 50% 44% 56% 50%;
+          background: radial-gradient(circle at 48% 42%, rgba(255, 255, 255, 0.1), transparent 55%),
+            radial-gradient(circle at 65% 72%, rgba(255, 255, 255, 0.12), transparent 60%),
+            conic-gradient(from 140deg, rgba(250, 145, 0, 0.82), rgba(253, 186, 116, 0.95), rgba(234, 88, 12, 0.9), rgba(250, 145, 0, 0.82));
+          filter: drop-shadow(0 30px 70px rgba(2, 6, 23, 0.45));
+        }
+        .auth-lion__face {
+          position: absolute;
+          width: 58%;
+          height: 58%;
+          border-radius: 48% 48% 52% 52% / 46% 46% 54% 54%;
+          background: linear-gradient(145deg, #fff4cf, #fde68a 55%, #fbbf24 100%);
+          box-shadow: inset 0 -16px 32px rgba(250, 145, 0, 0.25);
+        }
+        .auth-lion__eyes {
+          position: absolute;
+          top: 44%;
+          left: 50%;
+          width: 0;
+          height: 14px;
+          transform: translateX(-50%);
+        }
+        .auth-lion__eyes::before,
+        .auth-lion__eyes::after {
+          content: "";
+          position: absolute;
+          top: 0;
+          width: 14px;
+          height: 14px;
+          border-radius: 9999px;
+          background: #0f172a;
+        }
+        .auth-lion__eyes::before {
+          transform: translateX(-56px);
+        }
+        .auth-lion__eyes::after {
+          transform: translateX(56px);
+        }
+        .auth-lion__snout {
+          position: absolute;
+          bottom: 32%;
+          width: 120px;
+          height: 96px;
+          border-radius: 60% 60% 80% 80% / 55% 55% 90% 90%;
+          background: radial-gradient(circle at 50% 30%, #fde68a, #f59e0b 72%, rgba(245, 158, 11, 0));
+          box-shadow: 0 16px 28px rgba(15, 23, 42, 0.22);
+        }
+        .auth-lion__snout::before {
+          content: "";
+          position: absolute;
+          top: 26px;
+          left: 0;
+          right: 0;
+          margin: 0 auto;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background: #0f172a;
+          box-shadow: -36px 0 0 #0f172a, 36px 0 0 #0f172a;
+        }
+        .auth-lion__snout::after {
+          content: "";
+          position: absolute;
+          bottom: 18px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 70px;
+          height: 38px;
+          border-bottom-left-radius: 50% 70%;
+          border-bottom-right-radius: 50% 70%;
+          border: 4px solid rgba(15, 23, 42, 0.6);
+          border-top: none;
+        }
+        .auth-lion__crown {
+          position: absolute;
+          top: 16%;
+          width: 140px;
+          height: 80px;
+          background: radial-gradient(circle at 50% -40%, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)),
+            linear-gradient(135deg, rgba(250, 145, 0, 0.9), rgba(253, 224, 71, 0.95));
+          clip-path: polygon(10% 100%, 22% 0, 38% 55%, 50% 0, 62% 55%, 78% 0, 90% 100%);
+          box-shadow: 0 18px 30px rgba(15, 23, 42, 0.32);
+        }
+        @media (max-width: 640px) {
+          .auth-lion {
+            width: 320px;
+            height: 320px;
+            bottom: -140px;
+            left: -80px;
+            opacity: 0.65;
+          }
         }
         .auth-glow {
           position: absolute;
@@ -398,17 +661,57 @@ const AuthView: React.FC = () => {
           position: relative;
           z-index: 10;
           width: 100%;
-          max-width: 520px;
+          max-width: 540px;
           padding: 0 12px;
+          transform-style: preserve-3d;
         }
         .auth-card {
-          border-radius: 28px;
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          background: rgba(255, 255, 255, 0.92);
-          padding: 48px 40px;
-          color: #0f172a;
-          box-shadow: 0 40px 90px -30px rgba(15, 23, 42, 0.85);
-          backdrop-filter: blur(22px);
+          position: relative;
+          border-radius: 32px;
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          background: linear-gradient(
+            160deg,
+            rgba(15, 23, 42, 0.88),
+            rgba(30, 64, 175, 0.82) 58%,
+            rgba(250, 145, 0, 0.3) 100%
+          );
+          padding: 52px 44px;
+          color: #f8fafc;
+          box-shadow: 0 50px 110px -45px rgba(2, 6, 23, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+          backdrop-filter: blur(28px);
+          transform-style: preserve-3d;
+          transform: perspective(1600px)
+            rotateX(var(--tilt-x, 0deg))
+            rotateY(var(--tilt-y, 0deg))
+            translateZ(calc(var(--tilt-intensity, 0) * 18px));
+          transition: transform 0.4s ease, box-shadow 0.4s ease;
+        }
+        .auth-card::before {
+          content: "";
+          position: absolute;
+          inset: -1px;
+          border-radius: 32px;
+          background: radial-gradient(
+            circle at var(--glow-x, 50%) var(--glow-y, 50%),
+            rgba(250, 145, 0, 0.28),
+            transparent 68%
+          );
+          opacity: calc(0.25 + var(--tilt-intensity, 0) * 0.35);
+          pointer-events: none;
+          transition: opacity 0.4s ease;
+        }
+        .auth-card::after {
+          content: "";
+          position: absolute;
+          inset: 1px;
+          border-radius: 30px;
+          background: linear-gradient(140deg, rgba(148, 163, 184, 0.12), rgba(15, 118, 110, 0.04));
+          mix-blend-mode: screen;
+          opacity: calc(0.35 + var(--tilt-intensity, 0) * 0.25);
+          pointer-events: none;
+        }
+        .auth-card:hover {
+          box-shadow: 0 55px 130px -50px rgba(2, 6, 23, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.16);
         }
         @media (max-width: 520px) {
           .auth-card {
@@ -422,30 +725,32 @@ const AuthView: React.FC = () => {
           gap: 8px;
         }
         .auth-brand-title {
-          font-size: 34px;
+          font-size: 36px;
           line-height: 1.15;
           margin: 0;
           font-weight: 700;
-          color: ${BRAND.blue};
-          text-shadow: 0 12px 30px rgba(2, 6, 23, 0.18);
+          color: #f8fafc;
+          text-shadow: 0 18px 45px rgba(2, 6, 23, 0.4);
+          letter-spacing: 0.01em;
         }
         .auth-brand-subtitle {
           margin: 0;
           font-size: 16px;
           font-weight: 500;
-          color: ${BRAND.orange};
-          letter-spacing: 0.02em;
+          color: rgba(250, 204, 21, 0.92);
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
         }
         .auth-title {
-          font-size: 20px;
-          margin: 12px 0 0;
+          font-size: 22px;
+          margin: 16px 0 0;
           font-weight: 600;
-          color: #0f172a;
+          color: #e2e8f0;
         }
         .auth-subtitle {
-          margin-top: 4px;
-          font-size: 14px;
-          color: #475569;
+          margin-top: 6px;
+          font-size: 15px;
+          color: rgba(226, 232, 240, 0.78);
         }
         .auth-form {
           margin-top: 32px;
@@ -475,44 +780,44 @@ const AuthView: React.FC = () => {
           gap: 8px;
           align-items: flex-start;
           border-radius: 18px;
-          padding: 20px;
+          padding: 22px;
           text-align: left;
-          background: rgba(255, 255, 255, 0.92);
-          border: 1px solid rgba(148, 163, 184, 0.35);
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-          color: #0f172a;
+          background: linear-gradient(150deg, rgba(15, 23, 42, 0.82), rgba(15, 23, 42, 0.62));
+          border: 1px solid rgba(148, 163, 184, 0.32);
+          box-shadow: 0 26px 54px -34px rgba(2, 6, 23, 0.75);
+          color: #e2e8f0;
           cursor: pointer;
-          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+          transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
           overflow: hidden;
         }
         .auth-plan:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 18px 30px -18px rgba(15, 23, 42, 0.45);
+          transform: translateY(-4px) scale(1.01);
+          box-shadow: 0 32px 72px -36px rgba(2, 6, 23, 0.85);
         }
         .auth-plan:focus-visible {
-          outline: 3px solid rgba(0, 74, 173, 0.35);
+          outline: 3px solid rgba(56, 189, 248, 0.4);
           outline-offset: 2px;
         }
         .auth-plan--active {
-          border-color: rgba(0, 74, 173, 0.6);
-          box-shadow: 0 20px 34px -18px rgba(2, 6, 23, 0.6);
+          border-color: rgba(250, 145, 0, 0.7);
+          box-shadow: 0 34px 76px -30px rgba(250, 145, 0, 0.45);
         }
         .auth-plan-headline {
           font-size: 12px;
           letter-spacing: 0.08em;
           text-transform: uppercase;
           font-weight: 600;
-          color: #475569;
+          color: rgba(226, 232, 240, 0.66);
         }
         .auth-plan-name {
           font-size: 20px;
           font-weight: 700;
-          color: ${BRAND.blue};
+          color: #f8fafc;
         }
         .auth-plan-blurb {
           font-size: 13px;
-          color: #475569;
-          line-height: 1.4;
+          color: rgba(226, 232, 240, 0.78);
+          line-height: 1.45;
         }
         .auth-plan-pill {
           margin-top: auto;
@@ -522,18 +827,19 @@ const AuthView: React.FC = () => {
           border-radius: 9999px;
           font-size: 12px;
           font-weight: 600;
-          color: #fff;
-          background: linear-gradient(135deg, ${BRAND.blue}, ${BRAND.orange});
+          color: #0f172a;
+          background: linear-gradient(135deg, rgba(250, 204, 21, 0.9), rgba(250, 145, 0, 0.85));
         }
         .auth-plan-highlight {
           position: absolute;
           inset: auto 0 0 0;
-          height: 12px;
-          opacity: 0.75;
+          height: 14px;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+          opacity: 0.6;
         }
         .auth-plan-note {
           font-size: 13px;
-          color: #475569;
+          color: rgba(226, 232, 240, 0.75);
           text-align: center;
         }
         .auth-plan-summary {
@@ -541,37 +847,37 @@ const AuthView: React.FC = () => {
           align-items: center;
           justify-content: space-between;
           padding: 12px 16px;
-          border-radius: 14px;
-          background: rgba(0, 74, 173, 0.08);
-          border: 1px solid rgba(0, 74, 173, 0.2);
-          color: #0f172a;
+          border-radius: 16px;
+          background: rgba(15, 23, 42, 0.65);
+          border: 1px solid rgba(148, 163, 184, 0.32);
+          color: #f8fafc;
         }
         .auth-plan-summary-label {
           display: block;
           font-size: 12px;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          color: #1e293b;
+          color: rgba(226, 232, 240, 0.62);
         }
         .auth-plan-summary-name {
           font-size: 16px;
           font-weight: 600;
-          color: ${BRAND.blue};
+          color: #f8fafc;
         }
         .auth-plan-summary-change {
           border: none;
           background: transparent;
           font-size: 13px;
           font-weight: 600;
-          color: ${BRAND.orange};
+          color: rgba(250, 204, 21, 0.92);
           cursor: pointer;
           text-decoration: underline;
         }
         .auth-plan-summary-change:hover {
-          color: #cc7400;
+          color: rgba(250, 204, 21, 1);
         }
         .auth-plan-summary-change:focus-visible {
-          outline: 2px solid ${BRAND.orange};
+          outline: 2px solid rgba(250, 204, 21, 0.8);
           outline-offset: 2px;
         }
         .auth-field {
@@ -582,21 +888,23 @@ const AuthView: React.FC = () => {
         }
         .auth-label {
           font-weight: 500;
-          color: #1e293b;
+          color: rgba(226, 232, 240, 0.9);
         }
         .auth-input {
           border-radius: 14px;
-          border: 1px solid #cbd5f5;
+          border: 1px solid rgba(148, 163, 184, 0.45);
           padding: 12px 16px;
           font-size: 14px;
           color: #0f172a;
-          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
-          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+          background: linear-gradient(145deg, rgba(248, 250, 252, 0.94), rgba(226, 232, 240, 0.92));
+          box-shadow: 0 18px 38px -28px rgba(15, 23, 42, 0.45);
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
         }
         .auth-input:focus {
           outline: none;
-          border-color: ${BRAND.blue};
-          box-shadow: 0 0 0 3px rgba(0, 74, 173, 0.22);
+          border-color: rgba(0, 74, 173, 0.7);
+          box-shadow: 0 0 0 3px rgba(0, 74, 173, 0.25);
+          transform: translateY(-1px);
         }
         .auth-message {
           font-size: 14px;
@@ -618,26 +926,30 @@ const AuthView: React.FC = () => {
           background: linear-gradient(135deg, ${BRAND.blue}, ${BRAND.orange});
           color: #fff;
           cursor: pointer;
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-          box-shadow: 0 18px 32px -18px rgba(2, 6, 23, 0.75);
+          transition: transform 0.25s ease, box-shadow 0.25s ease;
+          box-shadow: 0 24px 44px -20px rgba(2, 6, 23, 0.82);
         }
         .auth-submit:disabled {
           opacity: 0.7;
           cursor: not-allowed;
         }
         .auth-submit:not(:disabled):hover {
-          transform: translateY(-1px);
-          box-shadow: 0 20px 40px -18px rgba(2, 6, 23, 0.82);
+          transform: translateY(-2px) scale(1.005);
+          box-shadow: 0 32px 60px -22px rgba(2, 6, 23, 0.9);
+        }
+        .auth-submit:not(:disabled):focus-visible {
+          outline: 2px solid rgba(255, 255, 255, 0.6);
+          outline-offset: 3px;
         }
         .auth-switch {
           text-align: center;
           font-size: 14px;
-          color: #64748b;
+          color: rgba(226, 232, 240, 0.7);
         }
         .auth-switch button {
           background: none;
           border: none;
-          color: ${BRAND.blue};
+          color: rgba(56, 189, 248, 0.95);
           font-weight: 600;
           cursor: pointer;
         }
@@ -780,9 +1092,22 @@ export default function Page() {
 
   // clients
   const [clients, setClients] = useState<ClientRow[]>([]);
-  const [clientId, setClientId] = useState<string | null>(null);
+  const [clientId, setClientIdState] = useState<string | null>(null);
+  const [preferredClientId, setPreferredClientId] = useState<string | null>(null);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsError, setClientsError] = useState<string | null>(null);
+
+  const changeClientId = useCallback((nextId: string | null) => {
+    setClientIdState(nextId);
+    setPreferredClientId(nextId);
+    if (typeof window !== "undefined") {
+      if (nextId) {
+        window.localStorage.setItem("pf-last-client", nextId);
+      } else {
+        window.localStorage.removeItem("pf-last-client");
+      }
+    }
+  }, []);
 
   // controls
   const [mode, setMode] = useState<"total" | "accounts">("total");
@@ -836,7 +1161,8 @@ export default function Page() {
 
   useEffect(() => {
     if (!session) {
-      setClientId(null);
+      setClientIdState(null);
+      setPreferredClientId(null);
       setClients([]);
       setClientsError(null);
       setClientsLoading(false);
@@ -844,11 +1170,19 @@ export default function Page() {
   }, [session]);
 
   useEffect(() => {
-    if (!session?.user?.id || !supabase) return;
+    if (!session) return;
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("pf-last-client");
+    if (stored) {
+      setPreferredClientId(stored);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
     let active = true;
     setClientsLoading(true);
     setClientsError(null);
-    setClientId(null);
     const loadClients = async () => {
       try {
         const { data, error } = await supabase.from("clients").select("id, name").order("created_at");
@@ -872,6 +1206,25 @@ export default function Page() {
       active = false;
     };
   }, [session?.user?.id, supabase]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (clientsLoading) return;
+    if (!clients.length) {
+      if (clientId !== null) {
+        changeClientId(null);
+      }
+      return;
+    }
+    if (clientId && clients.some((c) => c.id === clientId)) {
+      return;
+    }
+    if (preferredClientId && clients.some((c) => c.id === preferredClientId)) {
+      changeClientId(preferredClientId);
+      return;
+    }
+    changeClientId(clients[0].id);
+  }, [changeClientId, clientId, clients, clientsLoading, preferredClientId, session]);
 
   async function handleCreateClient(name: string): Promise<ClientRow> {
     if (!supabase) {
@@ -1077,18 +1430,19 @@ export default function Page() {
           clients={clients}
           loading={clientsLoading}
           error={clientsError}
-          onSelect={(id) => setClientId(id)}
+          onSelect={(id) => changeClientId(id)}
           onCreate={handleCreateClient}
           onSignOut={handleSignOut}
           userEmail={userEmail}
         />
       ) : (
-        <div className="mx-auto max-w-[1200px] space-y-6 px-4 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-3">
+        <div className="max-w-[1200px] mx-auto px-4 py-4">
+          {/* top bar */}
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <select
                 value={clientId ?? ""}
-                onChange={(e) => setClientId(e.target.value)}
+                onChange={(e) => changeClientId(e.target.value)}
                 className="rounded-lg border border-slate-300 bg-white px-3 py-2"
               >
                 {clients.map((c) => (
@@ -1105,10 +1459,11 @@ export default function Page() {
                   }
                   const name = prompt("New client name?");
                   if (!name) return;
-                  const { data, error } = await supabase.from("clients").insert({ name }).select().single();
-                  if (error) {
-                    alert("Could not add client. Check policies.");
-                    return;
+                  try {
+                    const created = await handleCreateClient(name);
+                    changeClientId(created.id);
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Could not add client. Check policies.");
                   }
                   setClients((p) => [...p, data as ClientRow]);
                   setClientId((data as any).id);
@@ -1130,10 +1485,6 @@ export default function Page() {
               <Button
                 className="border-0 bg-red-600 text-white hover:bg-red-700"
                 onClick={async () => {
-                  if (!supabase) {
-                    alert(SUPABASE_ENV_MESSAGE);
-                    return;
-                  }
                   if (!clientId) return;
                   const clientName = clients.find((c) => c.id === clientId)?.name ?? "this client";
                   if (
@@ -1169,7 +1520,7 @@ export default function Page() {
                     remainingClients[currentIndex - 1]?.id ??
                     remainingClients[0]?.id ??
                     null;
-                  setClientId(nextClientId);
+                  changeClientId(nextClientId);
 
                   if (!nextClientId) {
                     const today = new Date().toISOString().slice(0, 10);

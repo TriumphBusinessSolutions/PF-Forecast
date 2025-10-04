@@ -1190,6 +1190,11 @@ export default function Page() {
     setClientsError(null);
     const loadClients = async () => {
       try {
+        // ✅ If Supabase isn't ready, stop early (prevents null error at build time)
+        if (!supabaseConfigured || !supabase) {
+          setClients([]);
+          return;
+        }
         const { data, error } = await supabase.from("clients").select("id, name").order("created_at");
         if (!active) return;
         if (error) {

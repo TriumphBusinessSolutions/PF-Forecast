@@ -1035,6 +1035,15 @@ export default function Page() {
   }
 
   return (
+    <main style={{ minHeight: "100vh", background: "#f1f5f9" }}>
+      <style jsx global>{`
+        html,
+        body {
+          font-family: 'Rubik', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+          background: #f1f5f9;
+          color: #0f172a;
+        }
+      `}</style>
     <AppScaffold>
       {checkingSession ? (
         <div className="flex min-h-screen items-center justify-center px-4 py-12">

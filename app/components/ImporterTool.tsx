@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 type PFAccount = { slug: string; name: string };
 
 const CREATE_NEW_ACCOUNT_VALUE = '__create_new__';
+const SKIP_ROW_VALUE = '__skip_row__';
 const BUILT_IN_MAIN_ACCOUNT_NAMES = [
   'Income',
   'Materials',
@@ -15,15 +16,18 @@ const BUILT_IN_MAIN_ACCOUNT_NAMES = [
   'Tax',
 ];
 
-const SUGGESTION_RULES: { test: RegExp; slug: string; kind?: 'inflow' | 'outflow' }[] = [
-  { test: /(income|revenue|sales|fees|receipt|deposit)/i, slug: slugify('Income'), kind: 'inflow' },
+type SuggestionRule = { test: RegExp; slug: string; kind?: 'inflow' | 'outflow' };
+
+const SUGGESTION_RULES: SuggestionRule[] = [
+  { test: /(income|revenue|sales|fees|receipt|deposit|subscription|retainer|service)/i, slug: slugify('Income'), kind: 'inflow' },
   { test: /(material|inventory|cogs|cost of goods|suppl(ies|y)|parts?)/i, slug: slugify('Materials'), kind: 'outflow' },
   { test: /(labor|payroll|wages|contractor|subcontract|technician|crew|staff)/i, slug: slugify('Direct Labor'), kind: 'outflow' },
   { test: /(owner|member|partner|draw|distribution|equity)/i, slug: slugify("Owner's Pay"), kind: 'outflow' },
-  { test: /(tax|irs)/i, slug: slugify('Tax') },
+  { test: /(tax|irs|withholding)/i, slug: slugify('Tax'), kind: 'outflow' },
   { test: /(profit|retained)/i, slug: slugify('Profit'), kind: 'inflow' },
   {
-    test: /(rent|utilit|insurance|office|subscription|software|marketing|travel|expense|maintenance|suppl(ies|y))/i,
+    test:
+      /(rent|utilit|insurance|office|subscription|software|marketing|travel|expense|maintenance|suppl(ies|y)|fuel|advertis|bank fee|merchant|dues|loan|interest|lease|legal|professional)/i,
     slug: slugify('Operating Expenses'),
     kind: 'outflow',
   },
@@ -98,9 +102,12 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     const operating = accountOptions.find((a) => /operat/i.test(a.slug) || /operat/i.test(a.name));
 
     statement.rows.forEach((row) => {
-      const def = row.total >= 0 ? 'inflow' : 'outflow';
+      const rule = matchSuggestionRule(row.name);
+      const def = deriveKindFromValues(row, rule?.kind);
       nextKinds[row.name] = def;
-      const suggestion = suggestAccountSlug(row.name, def, accountOptions);
+      const suggestion =
+        (rule && resolveSuggestedSlug(rule.slug, accountOptions)) ||
+        suggestAccountSlug(row.name, def, accountOptions);
       if (suggestion) {
         nextAssignments[row.name] = suggestion;
         return;
@@ -134,6 +141,10 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
 
   const handleAssignmentChange = useCallback(
     (row: string, slug: string) => {
+      if (slug === SKIP_ROW_VALUE) {
+        setAssignments((prev) => ({ ...prev, [row]: SKIP_ROW_VALUE }));
+        return;
+      }
       if (slug === CREATE_NEW_ACCOUNT_VALUE) {
         const name = window.prompt('Name the new main account');
         const trimmed = name?.trim();
@@ -159,9 +170,10 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     const matrix: ProjectionMatrix = {};
     statement.rows.forEach((row) => {
       const slug = assignments[row.name];
-      if (!slug) return;
+      if (!slug || slug === SKIP_ROW_VALUE) return;
       if (!matrix[slug]) matrix[slug] = {};
-      const kind = kinds[row.name] ?? (row.total >= 0 ? 'inflow' : 'outflow');
+      const defaultKind = deriveKindFromValues(row, matchSuggestionRule(row.name)?.kind);
+      const kind = kinds[row.name] ?? defaultKind;
       statement.months.forEach((ym) => {
         const amt = normaliseValue(row.monthly[ym], kind);
         matrix[slug][ym] = (matrix[slug][ym] ?? 0) + amt;
@@ -319,6 +331,34 @@ function AssignmentTable({
   onKindChange: (row: string, kind: 'inflow' | 'outflow') => void;
   onAssignmentChange: (row: string, slug: string) => void;
 }) {
+  const totalMonths = statement.months.length;
+  const defaultWindow = Math.max(1, Math.min(6, totalMonths || 1));
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [windowSize, setWindowSize] = useState<number>(defaultWindow);
+  const [startIndex, setStartIndex] = useState(0);
+
+  useEffect(() => {
+    const clampedWindow = Math.max(1, Math.min(windowSize, totalMonths || 1));
+    if (clampedWindow !== windowSize) {
+      setWindowSize(clampedWindow);
+      return;
+    }
+    setStartIndex((prev) => Math.min(prev, Math.max(0, (totalMonths || 1) - clampedWindow)));
+  }, [totalMonths, windowSize]);
+
+  const windowOptions = useMemo(() => {
+    const base = [3, 6, 12, totalMonths].filter((n) => n > 0 && n <= totalMonths);
+    const unique = Array.from(new Set(base));
+    return unique.sort((a, b) => a - b);
+  }, [totalMonths]);
+
+  const visibleMonths = useMemo(() => {
+    if (!isExpanded) return [] as string[];
+    return statement.months.slice(startIndex, startIndex + windowSize);
+  }, [isExpanded, startIndex, statement.months, windowSize]);
+
+  const sliderMax = Math.max(0, totalMonths - windowSize);
+
   return (
     <div>
       <h3 className="text-base font-semibold text-slate-800 mb-2">Review imported rows</h3>
@@ -326,24 +366,69 @@ function AssignmentTable({
         Identify whether each row is an inflow or outflow and choose which Profit First account it should roll into.
         <span className="block mt-1">Need a different bucket? Select “Create new main account” from the dropdown.</span>
       </p>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 bg-white hover:bg-slate-50"
+        >
+          {isExpanded ? 'Collapse monthly activity' : 'Expand monthly activity'}
+        </button>
+        {isExpanded && totalMonths > 0 && (
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 ml-auto">
+            <label className="flex items-center gap-2">
+              Months visible
+              <select
+                value={windowSize}
+                onChange={(e) => setWindowSize(Number(e.target.value))}
+                className="border rounded-md px-2 py-1 bg-white text-xs"
+              >
+                {windowOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt >= totalMonths ? `All (${totalMonths})` : opt}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {sliderMax > 0 && visibleMonths.length > 0 && (
+              <div className="flex items-center gap-2 min-w-[12rem]">
+                <span className="font-medium text-slate-500 whitespace-nowrap">{formatMonth(visibleMonths[0])}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={sliderMax}
+                  value={startIndex}
+                  onChange={(e) => setStartIndex(Number(e.target.value))}
+                  className="flex-1"
+                />
+                <span className="font-medium text-slate-500 whitespace-nowrap">
+                  {formatMonth(visibleMonths[visibleMonths.length - 1])}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-sm whitespace-nowrap">
           <thead>
             <tr className="bg-slate-50">
               <th className="px-3 py-2 text-left font-semibold">Account</th>
               <th className="px-3 py-2 text-left font-semibold">Type</th>
               <th className="px-3 py-2 text-left font-semibold">Assign to</th>
-              {statement.months.map((ym) => (
-                <th key={ym} className="px-3 py-2 text-right font-semibold whitespace-nowrap">
-                  {formatMonth(ym)}
-                </th>
-              ))}
+              {isExpanded &&
+                visibleMonths.map((ym) => (
+                  <th key={ym} className="px-3 py-2 text-right font-semibold">
+                    {formatMonth(ym)}
+                  </th>
+                ))}
               <th className="px-3 py-2 text-right font-semibold">12 mo total</th>
             </tr>
           </thead>
           <tbody>
             {statement.rows.map((row) => {
-              const kind = kinds[row.name] ?? (row.total >= 0 ? 'inflow' : 'outflow');
+              const defaultKind = deriveKindFromValues(row, matchSuggestionRule(row.name)?.kind);
+              const kind = kinds[row.name] ?? defaultKind;
               const total = statement.months.reduce((sum, ym) => sum + normaliseValue(row.monthly[ym], kind), 0);
               return (
                 <tr key={row.name} className="border-b last:border-0">
@@ -377,6 +462,7 @@ function AssignmentTable({
                       onChange={(e) => onAssignmentChange(row.name, e.target.value)}
                     >
                       <option value="">Unassigned</option>
+                      <option value={SKIP_ROW_VALUE}>Do not import this row</option>
                       {accounts.map((acc) => (
                         <option key={acc.slug} value={acc.slug}>
                           {acc.name}
@@ -385,11 +471,12 @@ function AssignmentTable({
                       <option value={CREATE_NEW_ACCOUNT_VALUE}>+ Create new main account</option>
                     </select>
                   </td>
-                  {statement.months.map((ym) => (
-                    <td key={ym} className="px-3 py-2 text-right">
-                      {formatMoney(normaliseValue(row.monthly[ym], kind))}
-                    </td>
-                  ))}
+                  {isExpanded &&
+                    visibleMonths.map((ym) => (
+                      <td key={ym} className="px-3 py-2 text-right font-mono">
+                        {formatMoney(normaliseValue(row.monthly[ym], kind))}
+                      </td>
+                    ))}
                   <td className="px-3 py-2 text-right font-medium">
                     {formatMoney(total)}
                   </td>
@@ -434,7 +521,7 @@ function MappedSummary({
     <div>
       <h3 className="text-base font-semibold text-slate-800 mb-2">Mapped inflow &amp; outflow totals</h3>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-sm whitespace-nowrap">
           <thead>
             <tr className="bg-slate-50">
               <th className="px-3 py-2 text-left font-semibold">Account</th>
@@ -512,7 +599,7 @@ function ProjectionEditor({
         </label>
       </div>
       <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
+        <table className="min-w-full text-sm whitespace-nowrap">
           <thead>
             <tr className="bg-slate-50">
               <th className="px-3 py-2 text-left font-semibold">Account</th>
@@ -806,6 +893,7 @@ function isAggregateRow(name: string): boolean {
   const normalized = name.trim().toLowerCase();
   if (!normalized) return true;
   if (/^total\b/.test(normalized)) return true;
+  if (/\bsubtotal\b/.test(normalized)) return true;
   if (/(net|gross) (income|profit|loss)/.test(normalized)) return true;
   if (/operating (income|profit)/.test(normalized)) return true;
   if (/^income total$/.test(normalized)) return true;
@@ -813,6 +901,27 @@ function isAggregateRow(name: string): boolean {
   if (/^total other (income|expense)/.test(normalized)) return true;
   if (/^total expenses$/.test(normalized)) return true;
   if (/^total operating expenses$/.test(normalized)) return true;
+  const summaryLabels = [
+    'income',
+    'expenses',
+    'expense',
+    'cost of goods sold',
+    'cost of sales',
+    'cogs',
+    'other income',
+    'other expense',
+    'other expenses',
+    'gross profit',
+    'gross margin',
+    'operating expenses',
+    'operating expense',
+    'operating income',
+    'operating profit',
+    'net income',
+    'net profit',
+    'net operating income',
+  ];
+  if (summaryLabels.includes(normalized)) return true;
   return false;
 }
 
@@ -861,6 +970,40 @@ function trendSeries(values: number[], future: number): number[] {
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value || 0);
+}
+
+function matchSuggestionRule(rowName: string): SuggestionRule | undefined {
+  const lower = rowName.toLowerCase();
+  return SUGGESTION_RULES.find((rule) => rule.test.test(lower));
+}
+
+function deriveKindFromValues(
+  row: ParsedRow,
+  hint?: 'inflow' | 'outflow'
+): 'inflow' | 'outflow' {
+  if (hint) return hint;
+  const values = Object.values(row.monthly);
+  if (!values.length) {
+    return row.total >= 0 ? 'inflow' : 'outflow';
+  }
+  let positives = 0;
+  let negatives = 0;
+  let positiveSum = 0;
+  let negativeSum = 0;
+  values.forEach((value) => {
+    if (value > 0) {
+      positives += 1;
+      positiveSum += value;
+    } else if (value < 0) {
+      negatives += 1;
+      negativeSum += Math.abs(value);
+    }
+  });
+  if (positives && !negatives) return 'inflow';
+  if (negatives && !positives) return 'outflow';
+  if (negativeSum > positiveSum) return 'outflow';
+  if (positiveSum > negativeSum) return 'inflow';
+  return row.total >= 0 ? 'inflow' : 'outflow';
 }
 
 function suggestAccountSlug(

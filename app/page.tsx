@@ -13,7 +13,6 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { supabase } from "../lib/supabase";
-import ImporterTool from "./components/ImporterTool";
 
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };
@@ -305,8 +304,6 @@ export default function Page() {
             </select>
           </div>
         </div>
-
-        <ImporterTool accounts={accounts} />
 
         {/* chart */}
         <Card title="Projected Ending Balances">

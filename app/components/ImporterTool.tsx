@@ -4,6 +4,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 type PFAccount = { slug: string; name: string };
 
+const CREATE_NEW_ACCOUNT_VALUE = '__create_new__';
+const BUILT_IN_MAIN_ACCOUNT_NAMES = [
+  'Income',
+  'Materials',
+  'Direct Labor',
+  'Operating Expenses',
+  "Owner's Pay",
+  'Profit',
+  'Tax',
+];
+
 type ParsedRow = {
   name: string;
   monthly: Record<string, number>;
@@ -38,6 +49,13 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
   const [kinds, setKinds] = useState<Record<string, 'inflow' | 'outflow'>>({});
   const [futureCount, setFutureCount] = useState<number>(6);
   const [projectionOverrides, setProjectionOverrides] = useState<Record<string, number>>({});
+  const [accountOptions, setAccountOptions] = useState<PFAccount[]>(() =>
+    mergeAccountLists(buildDefaultAccounts(), accounts)
+  );
+
+  useEffect(() => {
+    setAccountOptions((prev) => mergeAccountLists(prev, buildDefaultAccounts(), accounts));
+  }, [accounts]);
 
   const parseAndSet = useCallback(
     (input: string) => {
@@ -62,15 +80,17 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     if (!statement) return;
     const nextAssignments: Record<string, string> = {};
     const nextKinds: Record<string, 'inflow' | 'outflow'> = {};
+    const income = accountOptions.find((a) => /income/i.test(a.slug) || /income/i.test(a.name));
+    const operating = accountOptions.find((a) => /operat/i.test(a.slug) || /operat/i.test(a.name));
+
     statement.rows.forEach((row) => {
       const def = row.total >= 0 ? 'inflow' : 'outflow';
       nextKinds[row.name] = def;
-      if (accounts.length) {
-        // Heuristic: inflows map to first account, outflows to Operating if present
-        const operating = accounts.find((a) => /operat/i.test(a.slug) || /operat/i.test(a.name));
+      if (accountOptions.length) {
+        // Heuristic: inflows map to Income if present, outflows to Operating if present
         nextAssignments[row.name] = def === 'inflow'
-          ? accounts[0]?.slug ?? ''
-          : operating?.slug ?? accounts[0]?.slug ?? '';
+          ? income?.slug ?? accountOptions[0]?.slug ?? ''
+          : operating?.slug ?? accountOptions[0]?.slug ?? '';
       } else {
         nextAssignments[row.name] = '';
       }
@@ -78,7 +98,7 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     setAssignments(nextAssignments);
     setKinds(nextKinds);
     setProjectionOverrides({});
-  }, [statement, accounts]);
+  }, [statement]);
 
   const handleParse = () => {
     parseAndSet(rawInput);
@@ -92,6 +112,28 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
     parseAndSet(text);
     event.target.value = '';
   };
+
+  const handleAssignmentChange = useCallback(
+    (row: string, slug: string) => {
+      if (slug === CREATE_NEW_ACCOUNT_VALUE) {
+        const name = window.prompt('Name the new main account');
+        const trimmed = name?.trim();
+        if (!trimmed) {
+          return;
+        }
+        setAccountOptions((prev) => {
+          const nextSlug = ensureUniqueSlug(slugify(trimmed), prev);
+          const newAccount: PFAccount = { slug: nextSlug, name: trimmed };
+          const merged = mergeAccountLists(prev, [newAccount]);
+          setAssignments((prevAssignments) => ({ ...prevAssignments, [row]: nextSlug }));
+          return merged;
+        });
+        return;
+      }
+      setAssignments((prev) => ({ ...prev, [row]: slug }));
+    },
+    []
+  );
 
   const monthAssignments = useMemo(() => {
     if (!statement) return null;
@@ -210,22 +252,22 @@ export default function ImporterTool({ accounts }: ImporterToolProps) {
           {statement && (
             <div className="space-y-6">
               <AssignmentTable
-                accounts={accounts}
+                accounts={accountOptions}
                 statement={statement}
                 assignments={assignments}
                 kinds={kinds}
                 onKindChange={(row, kind) => setKinds((prev) => ({ ...prev, [row]: kind }))}
-                onAssignmentChange={(row, slug) => setAssignments((prev) => ({ ...prev, [row]: slug }))}
+                onAssignmentChange={handleAssignmentChange}
               />
 
               <MappedSummary
-                accounts={accounts}
+                accounts={accountOptions}
                 statement={statement}
                 monthAssignments={monthAssignments}
               />
 
               <ProjectionEditor
-                accounts={accounts}
+                accounts={accountOptions}
                 monthAssignments={monthAssignments}
                 futureMonths={futureMonths}
                 projections={projections}
@@ -263,6 +305,7 @@ function AssignmentTable({
       <h3 className="text-base font-semibold text-slate-800 mb-2">Review imported rows</h3>
       <p className="text-xs text-slate-500 mb-3">
         Identify whether each row is an inflow or outflow and choose which Profit First account it should roll into.
+        <span className="block mt-1">Need a different bucket? Select “Create new main account” from the dropdown.</span>
       </p>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -315,6 +358,7 @@ function AssignmentTable({
                           {acc.name}
                         </option>
                       ))}
+                      <option value={CREATE_NEW_ACCOUNT_VALUE}>+ Create new main account</option>
                     </select>
                   </td>
                   <td className="px-3 py-2 text-right font-medium">
@@ -477,6 +521,53 @@ function ProjectionEditor({
 }
 
 // ---------- helpers ----------
+
+function buildDefaultAccounts(): PFAccount[] {
+  return BUILT_IN_MAIN_ACCOUNT_NAMES.map((name) => ({ slug: slugify(name), name }));
+}
+
+function mergeAccountLists(...lists: (PFAccount[] | undefined)[]): PFAccount[] {
+  const map = new Map<string, PFAccount>();
+  lists.forEach((list) => {
+    (list ?? []).forEach((acc) => {
+      const normalised = normaliseAccount(acc);
+      if (!normalised) return;
+      if (!map.has(normalised.slug)) {
+        map.set(normalised.slug, normalised);
+      }
+    });
+  });
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normaliseAccount(acc: PFAccount): PFAccount | null {
+  const name = acc.name?.trim() || acc.slug?.trim();
+  if (!name) return null;
+  const slugSource = acc.slug?.trim() || name;
+  const slug = slugify(slugSource);
+  if (!slug) return null;
+  return { slug, name };
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+}
+
+function ensureUniqueSlug(base: string, existing: PFAccount[]): string {
+  const safeBase = base || 'account';
+  const used = new Set(existing.map((acc) => acc.slug));
+  let candidate = safeBase;
+  let i = 2;
+  while (used.has(candidate)) {
+    candidate = `${safeBase}_${i}`;
+    i += 1;
+  }
+  return candidate;
+}
 
 function parseStatement(raw: string): ParsedStatement {
   const warnings: string[] = [];

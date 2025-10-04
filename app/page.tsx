@@ -160,8 +160,9 @@ const AuthView: React.FC = () => {
       <div className="auth-card-wrapper">
         <div className="auth-card">
           <div className="auth-copy">
-            <p className="auth-kicker">Profit First Forecast</p>
-            <h1 className="auth-title">{mode === "sign-in" ? "Welcome back" : "Create your account"}</h1>
+            <h1 className="auth-brand-title">Triumph Cash Forecast</h1>
+            <p className="auth-brand-subtitle">Specially made to Follow Profit First Methods</p>
+            <h2 className="auth-title">{mode === "sign-in" ? "Welcome back" : "Create your account"}</h2>
             <p className="auth-subtitle">
               {mode === "sign-in"
                 ? "Sign in to review client performance and update allocations."
@@ -313,23 +314,33 @@ const AuthView: React.FC = () => {
         }
         .auth-copy {
           text-align: center;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
         }
-        .auth-kicker {
-          font-size: 11px;
-          letter-spacing: 0.45em;
-          text-transform: uppercase;
-          font-weight: 600;
-          color: #64748b;
-          margin-bottom: 12px;
+        .auth-brand-title {
+          font-size: 34px;
+          line-height: 1.15;
+          margin: 0;
+          font-weight: 700;
+          color: ${BRAND.blue};
+          text-shadow: 0 12px 30px rgba(2, 6, 23, 0.18);
+        }
+        .auth-brand-subtitle {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 500;
+          color: ${BRAND.orange};
+          letter-spacing: 0.02em;
         }
         .auth-title {
-          font-size: 32px;
-          margin: 0;
+          font-size: 20px;
+          margin: 12px 0 0;
           font-weight: 600;
           color: #0f172a;
         }
         .auth-subtitle {
-          margin-top: 12px;
+          margin-top: 4px;
           font-size: 14px;
           color: #475569;
         }
@@ -360,8 +371,8 @@ const AuthView: React.FC = () => {
         }
         .auth-input:focus {
           outline: none;
-          border-color: #38bdf8;
-          box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+          border-color: ${BRAND.blue};
+          box-shadow: 0 0 0 3px rgba(0, 74, 173, 0.22);
         }
         .auth-message {
           font-size: 14px;
@@ -380,10 +391,11 @@ const AuthView: React.FC = () => {
           padding: 14px 16px;
           font-size: 16px;
           font-weight: 600;
-          background: linear-gradient(135deg, #0ea5e9, #2563eb);
+          background: linear-gradient(135deg, ${BRAND.blue}, ${BRAND.orange});
           color: #fff;
           cursor: pointer;
           transition: transform 0.2s ease, box-shadow 0.2s ease;
+          box-shadow: 0 18px 32px -18px rgba(2, 6, 23, 0.75);
         }
         .auth-submit:disabled {
           opacity: 0.7;
@@ -391,7 +403,7 @@ const AuthView: React.FC = () => {
         }
         .auth-submit:not(:disabled):hover {
           transform: translateY(-1px);
-          box-shadow: 0 16px 32px -20px rgba(37, 99, 235, 0.9);
+          box-shadow: 0 20px 40px -18px rgba(2, 6, 23, 0.82);
         }
         .auth-switch {
           text-align: center;
@@ -401,7 +413,7 @@ const AuthView: React.FC = () => {
         .auth-switch button {
           background: none;
           border: none;
-          color: #0ea5e9;
+          color: ${BRAND.blue};
           font-weight: 600;
           cursor: pointer;
         }

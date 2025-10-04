@@ -270,6 +270,61 @@ export default function Page() {
             >
               + Add Client
             </Button>
+            <Button
+              className="bg-red-600 text-white border-0 hover:bg-red-700"
+              onClick={async () => {
+                if (!clientId) return;
+                const clientName = clients.find((c) => c.id === clientId)?.name ?? "this client";
+                if (
+                  !window.confirm(
+                    `Delete ${clientName}? This will permanently remove the client and all associated data.`
+                  )
+                )
+                  return;
+
+                const tables = ["allocation_targets", "pf_accounts", "coa_to_pf_map"];
+                for (const table of tables) {
+                  const { error } = await supabase.from(table).delete().eq("client_id", clientId);
+                  if (error) {
+                    console.error(error);
+                    alert(`Could not delete client data from ${table}. Check policies.`);
+                    return;
+                  }
+                }
+
+                const { error } = await supabase.from("clients").delete().eq("id", clientId);
+                if (error) {
+                  console.error(error);
+                  alert("Could not delete client. Check policies.");
+                  return;
+                }
+
+                const currentIndex = clients.findIndex((c) => c.id === clientId);
+                const remainingClients = clients.filter((c) => c.id !== clientId);
+                setClients(remainingClients);
+                const nextClientId =
+                  remainingClients[currentIndex]?.id ??
+                  remainingClients[currentIndex - 1]?.id ??
+                  remainingClients[0]?.id ??
+                  null;
+                setClientId(nextClientId);
+
+                if (!nextClientId) {
+                  const today = new Date().toISOString().slice(0, 10);
+                  setAccounts([]);
+                  setActivity([]);
+                  setBalances([]);
+                  setMonths([]);
+                  setAlloc({});
+                  setAllocDate(today);
+                  setCoaMap({});
+                  setDrill(null);
+                  setOcc([]);
+                }
+              }}
+            >
+              Delete Client
+            </Button>
           </div>
 
         {/* controls like your first screenshot */}

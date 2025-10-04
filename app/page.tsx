@@ -18,11 +18,6 @@ import { supabase } from "../lib/supabase";
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };
 
-const DEFAULT_SIGN_IN = {
-  email: "info@triumphcoachinggroup.com",
-  password: "Triumph$2025",
-};
-
 const MEMBERSHIP_PLANS = [
   {
     id: "launch",
@@ -118,8 +113,8 @@ const AppScaffold: React.FC<React.PropsWithChildren> = ({ children }) => (
 
 const AuthView: React.FC = () => {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
-  const [email, setEmail] = useState(DEFAULT_SIGN_IN.email);
-  const [password, setPassword] = useState(DEFAULT_SIGN_IN.password);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [signupStep, setSignupStep] = useState<"plans" | "form">("form");
@@ -168,8 +163,8 @@ const AuthView: React.FC = () => {
       setPassword("");
     } else {
       setSignupStep("form");
-      setEmail(DEFAULT_SIGN_IN.email);
-      setPassword(DEFAULT_SIGN_IN.password);
+      setEmail("");
+      setPassword("");
     }
   };
 

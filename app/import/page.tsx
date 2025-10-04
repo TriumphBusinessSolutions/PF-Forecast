@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import ImporterTool from "../components/ImporterTool";
-import { supabase } from "../../lib/supabase";
+import { getSupabaseClient } from "../../lib/supabase";
 
 type PFAccount = { slug: string; name: string };
 
@@ -21,12 +21,14 @@ export default function ImportPage() {
 function ImportPageContent() {
   const searchParams = useSearchParams();
   const clientId = searchParams.get("clientId");
+  const supabase = getSupabaseClient();
   const [accounts, setAccounts] = useState<PFAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const supabaseMisconfigured = !supabase;
 
   useEffect(() => {
-    if (!clientId) {
+    if (!clientId || !supabase) {
       setAccounts([]);
       setError(null);
       setLoading(false);
@@ -59,7 +61,7 @@ function ImportPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [clientId]);
+  }, [clientId, supabase]);
 
   const helperMessage = useMemo(() => {
     if (clientId) return null;
@@ -76,6 +78,12 @@ function ImportPageContent() {
             Upload a cash-basis trailing twelve month Profit &amp; Loss statement. We will detect individual account activity,
             map it to your Profit First buckets, and create editable projections.
           </p>
+          {supabaseMisconfigured && (
+            <p className="text-xs text-rose-600">
+              Supabase environment variables are not configured. Set NEXT_PUBLIC_SUPABASE_URL and
+              NEXT_PUBLIC_SUPABASE_ANON_KEY to enable imports.
+            </p>
+          )}
           {helperMessage && <p className="text-xs text-slate-500">{helperMessage}</p>}
           {clientId && (
             <p className="text-xs text-slate-500">

@@ -155,7 +155,7 @@ export default function Page() {
         .select("*")
         .eq("client_id", clientId)
         .order("ym");
-      const allMonths = Array.from(new Set((act ?? []).map((r: any) => r.ym)));
+      const allMonths = collectMonths((act ?? []) as ActLong[], (bal ?? []) as BalLong[]);
       setMonths(filterMonths(allMonths, startMonth, horizon));
       setActivity((act ?? []) as ActLong[]);
       setBalances((bal ?? []) as BalLong[]);
@@ -164,9 +164,9 @@ export default function Page() {
 
   // re-filter months when controls change
   useEffect(() => {
-    const all = Array.from(new Set(activity.map((r) => r.ym)));
+    const all = collectMonths(activity, balances);
     setMonths(filterMonths(all, startMonth, horizon));
-  }, [startMonth, horizon, activity]);
+  }, [startMonth, horizon, activity, balances]);
 
   // ------------ pivots ------------
   const actByMonth = useMemo(() => {
@@ -550,6 +550,13 @@ export default function Page() {
 }
 
 // -------- helper components / functions --------
+function collectMonths(activity: ActLong[], balances: BalLong[]) {
+  const set = new Set<string>();
+  activity.forEach((r) => set.add(r.ym));
+  balances.forEach((r) => set.add(r.ym));
+  return Array.from(set);
+}
+
 function filterMonths(all: string[], startYM: string, horizon: number) {
   const [y, m] = startYM.split("-").map(Number);
   const start = new Date(y, m - 1, 1);

@@ -13,7 +13,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { supabase } from "../lib/supabase";
+import { getSupabaseClient } from "../lib/supabase";
 
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };
@@ -52,6 +52,10 @@ const shortYM = (ym: string) => {
 
 const toSlug = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+const supabase = getSupabaseClient();
+const SUPABASE_ENV_MESSAGE =
+  "Supabase environment variables are not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to use the dashboard.";
 
 // ------------------ types ------------------
 type ClientRow = { id: string; name: string };
@@ -94,7 +98,6 @@ const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({
     } ${className}`}
   />
 );
-
 
 const AuthView: React.FC = () => {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
@@ -150,6 +153,11 @@ const AuthView: React.FC = () => {
     event.preventDefault();
     setMessage(null);
     setLoading(true);
+    if (!supabase) {
+      setMessage({ type: "error", text: SUPABASE_ENV_MESSAGE });
+      setLoading(false);
+      return;
+    }
     try {
       if (mode === "sign-in") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -259,6 +267,9 @@ const AuthView: React.FC = () => {
                 ? "Select the membership level that fits your firm—each option can be customized later."
                 : "Set up your workspace so you can start onboarding clients."}
             </p>
+            {!supabaseConfigured && (
+              <p className="auth-message auth-message--error">{SUPABASE_ENV_MESSAGE}</p>
+            )}
           </div>
 
           {showPlanStep ? (
@@ -346,7 +357,7 @@ const AuthView: React.FC = () => {
                   {message.text}
                 </p>
               )}
-              <button type="submit" className="auth-submit" disabled={loading}>
+              <button type="submit" className="auth-submit" disabled={loading || !supabaseConfigured}>
                 {loading ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
               </button>
               <p className="auth-switch">
@@ -1124,6 +1135,12 @@ export default function Page() {
   // ------------ auth & client bootstrap ------------
   useEffect(() => {
     let active = true;
+    if (!supabase) {
+      setCheckingSession(false);
+      return () => {
+        active = false;
+      };
+    }
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       setSession(data.session);
@@ -1188,7 +1205,7 @@ export default function Page() {
     return () => {
       active = false;
     };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, supabase]);
 
   useEffect(() => {
     if (!session) return;
@@ -1210,6 +1227,9 @@ export default function Page() {
   }, [changeClientId, clientId, clients, clientsLoading, preferredClientId, session]);
 
   async function handleCreateClient(name: string): Promise<ClientRow> {
+    if (!supabase) {
+      throw new Error(SUPABASE_ENV_MESSAGE);
+    }
     if (!session) {
       throw new Error("You must be signed in to create clients.");
     }
@@ -1253,7 +1273,7 @@ export default function Page() {
 
   // ------------ load data for a client ------------
   useEffect(() => {
-    if (!clientId || !session) return;
+    if (!clientId || !session || !supabase) return;
     (async () => {
       // accounts
       const { data: paf } = await supabase
@@ -1307,7 +1327,7 @@ export default function Page() {
       setActivity((act ?? []) as ActLong[]);
       setBalances((bal ?? []) as BalLong[]);
     })();
-  }, [clientId]);
+  }, [clientId, session, supabase]);
 
   // re-filter months when controls change
   useEffect(() => {
@@ -1351,7 +1371,7 @@ export default function Page() {
 
   // ------------ drill ------------
   async function openDrill(slug: string, ym: string) {
-    if (!clientId) return;
+    if (!clientId || !supabase) return;
     setDrill({ slug, ym });
     const { data } = await supabase
       .from("v_proj_occurrences")
@@ -1370,7 +1390,21 @@ export default function Page() {
   const userEmail = session?.user?.email ?? (typeof metadataEmail === "string" ? metadataEmail : null);
 
   async function handleSignOut() {
+    if (!supabase) return;
     await supabase.auth.signOut();
+  }
+
+  if (!supabase) {
+    return (
+      <main className="min-h-screen bg-slate-100">
+        <div className="flex min-h-screen items-center justify-center px-4 py-12">
+          <div className="max-w-lg space-y-3 text-center">
+            <h1 className="text-2xl font-semibold text-slate-900">Supabase configuration required</h1>
+            <p className="text-sm text-slate-600">{SUPABASE_ENV_MESSAGE}</p>
+          </div>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -1419,6 +1453,10 @@ export default function Page() {
               </select>
               <Button
                 onClick={async () => {
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
                   const name = prompt("New client name?");
                   if (!name) return;
                   try {
@@ -1427,6 +1465,19 @@ export default function Page() {
                   } catch (err) {
                     alert(err instanceof Error ? err.message : "Could not add client. Check policies.");
                   }
+                  setClients((p) => [...p, data as ClientRow]);
+                  setClientId((data as any).id);
+
+                  const core = [
+                    { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
+                    { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
+                    { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
+                    { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
+                    { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
+                  ];
+                  await supabase
+                    .from("pf_accounts")
+                    .insert(core.map((r) => ({ client_id: (data as any).id, ...r })));
                 }}
               >
                 + Add Client
@@ -1499,7 +1550,6 @@ export default function Page() {
             </div>
           </div>
 
-          {/* controls */}
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-sm text-slate-700">Horizon</label>
             <select
@@ -1531,7 +1581,6 @@ export default function Page() {
             </select>
           </div>
 
-          {/* chart */}
           <Card title="Projected Ending Balances">
             <div className="h-[320px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -1559,191 +1608,189 @@ export default function Page() {
             </div>
           </Card>
 
-          {/* ending balances table */}
-          <div className="mt-4">
-            <Card title="Ending Bank Balances (roll-forward)">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50">
-                      <th className="px-3 py-2 text-left font-semibold">Row</th>
-                      {months.map((m) => (
-                        <th key={m} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
-                          {shortYM(m)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((acc) => (
-                      <tr key={acc.slug} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium text-slate-800">{acc.name} (End)</td>
-                        {months.map((m) => {
-                          const row = balByMonth.get(m) || {};
-                          const val = row[acc.slug] || 0;
-                          return (
-                            <td
-                              key={m}
-                              className="cursor-pointer px-3 py-2 text-right"
-                              onClick={() => openDrill(acc.slug, m)}
-                            >
-                              {money(val)}
-                            </td>
-                          );
-                        })}
-                      </tr>
+          <Card title="Ending Bank Balances (roll-forward)">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className="px-3 py-2 text-left font-semibold">Row</th>
+                    {months.map((m) => (
+                      <th key={m} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+                        {shortYM(m)}
+                      </th>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          </div>
-
-          {/* monthly activity table */}
-          <div className="mt-4">
-            <Card title="Monthly Activity (net movement)">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50">
-                      <th className="px-3 py-2 text-left font-semibold">Account (net)</th>
-                      {months.map((m) => (
-                        <th key={m} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
-                          {shortYM(m)}
-                        </th>
-                      ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {accounts.map((acc) => (
+                    <tr key={acc.slug} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-800">{acc.name} (End)</td>
+                      {months.map((m) => {
+                        const row = balByMonth.get(m) || {};
+                        const val = row[acc.slug] || 0;
+                        return (
+                          <td
+                            key={m}
+                            className="cursor-pointer px-3 py-2 text-right"
+                            onClick={() => openDrill(acc.slug, m)}
+                          >
+                            {money(val)}
+                          </td>
+                        );
+                      })}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((acc) => (
-                      <tr key={acc.slug} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
-                        {months.map((m) => {
-                          const row = actByMonth.get(m) || {};
-                          const val = row[acc.slug] || 0;
-                          return (
-                            <td
-                              key={m}
-                              className="cursor-pointer px-3 py-2 text-right"
-                              onClick={() => openDrill(acc.slug, m)}
-                            >
-                              {money(val)}
-                            </td>
-                          );
-                        })}
-                      </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card title="Monthly Activity (net movement)">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50">
+                    <th className="px-3 py-2 text-left font-semibold">Account (net)</th>
+                    {months.map((m) => (
+                      <th key={m} className="whitespace-nowrap px-3 py-2 text-right font-semibold">
+                        {shortYM(m)}
+                      </th>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-2 text-xs text-slate-500">
-                Beginning balance + Net activity = Ending balance.
-              </p>
-            </Card>
-          </div>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accounts.map((acc) => (
+                    <tr key={acc.slug} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-800">{acc.name}</td>
+                      {months.map((m) => {
+                        const row = actByMonth.get(m) || {};
+                        const val = row[acc.slug] || 0;
+                        return (
+                          <td
+                            key={m}
+                            className="cursor-pointer px-3 py-2 text-right"
+                            onClick={() => openDrill(acc.slug, m)}
+                          >
+                            {money(val)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              Beginning balance + Net activity = Ending balance.
+            </p>
+          </Card>
 
-          {/* settings (minimal — allocations only, dynamic) */}
-          <div className="mt-6">
-            <Card title="Settings — Allocation Targets">
-              <div className="mb-3 flex items-center gap-3">
-                <span className="text-sm text-slate-700">Effective date</span>
-                <input
-                  type="date"
-                  className="rounded-md border border-slate-300 bg-white px-2 py-1"
-                  value={allocDate}
-                  onChange={(e) => setAllocDate(e.target.value)}
-                />
-                <span
-                  className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
-                    allocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
-                  }`}
-                >
-                  Total: {(allocTotal * 100).toFixed(1)}%
-                </span>
-              </div>
+          <Card title="Settings — Allocation Targets">
+            <div className="mb-3 flex items-center gap-3">
+              <span className="text-sm text-slate-700">Effective date</span>
+              <input
+                type="date"
+                className="rounded-md border border-slate-300 bg-white px-2 py-1"
+                value={allocDate}
+                onChange={(e) => setAllocDate(e.target.value)}
+              />
+              <span
+                className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
+                  allocOk ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"
+                }`}
+              >
+                Total: {(allocTotal * 100).toFixed(1)}%
+              </span>
+            </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5">
-                {accounts.map((a) => (
-                  <div key={a.slug} className="space-y-1">
-                    <label className="text-sm font-medium text-slate-700">{a.name}</label>
-                    <input
-                      type="number"
-                      step={0.01}
-                      min={0}
-                      max={1}
-                      value={alloc[a.slug] ?? 0}
-                      onChange={(e) =>
-                        setAlloc((prev) => ({ ...prev, [a.slug]: Number(e.target.value) }))
-                      }
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                    />
-                  </div>
-                ))}
-              </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-5">
+              {accounts.map((a) => (
+                <div key={a.slug} className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">{a.name}</label>
+                  <input
+                    type="number"
+                    step={0.01}
+                    min={0}
+                    max={1}
+                    value={alloc[a.slug] ?? 0}
+                    onChange={(e) =>
+                      setAlloc((prev) => ({ ...prev, [a.slug]: Number(e.target.value) }))
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  />
+                </div>
+              ))}
+            </div>
 
-              <div className="mt-4 flex gap-3">
-                <Button
-                  disabled={!clientId || !allocOk}
-                  onClick={async () => {
-                    if (!clientId || !allocOk) return;
-                    await Promise.all(
-                      accounts.map((a) =>
-                        supabase.from("allocation_targets").upsert(
-                          {
-                            client_id: clientId,
-                            effective_date: allocDate,
-                            pf_slug: a.slug,
-                            pct: alloc[a.slug] || 0,
-                          },
-                          { onConflict: "client_id, effective_date, pf_slug" }
-                        )
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button
+                disabled={!clientId || !allocOk}
+                onClick={async () => {
+                  if (!clientId || !allocOk) return;
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
+                  await Promise.all(
+                    accounts.map((a) =>
+                      supabase.from("allocation_targets").upsert(
+                        {
+                          client_id: clientId,
+                          effective_date: allocDate,
+                          pf_slug: a.slug,
+                          pct: alloc[a.slug] || 0,
+                        },
+                        { onConflict: "client_id, effective_date, pf_slug" }
                       )
-                    );
-                    alert("Allocations saved.");
-                  }}
-                  className={`!border-transparent !bg-[${BRAND.blue}] !text-white hover:opacity-90 ${
-                    !allocOk ? "opacity-60 cursor-not-allowed" : ""
-                  }`}
-                >
-                  Save Allocations
-                </Button>
-                <Button
-                  className="!border-slate-200"
-                  onClick={() => location.reload()}
-                >
-                  Recalculate
-                </Button>
-                <Button
-                  onClick={async () => {
-                    if (!clientId) return;
-                    const name = prompt("Add PF account (example: Truck)");
-                    if (!name) return;
-                    const slug = toSlug(name);
-                    const { error } = await supabase.from("pf_accounts").insert({
-                      client_id: clientId,
-                      slug,
-                      name,
-                      sort_order: 100,
-                      color: "#8b5cf6",
-                    });
-                    if (error) return alert("Could not add account. Check RLS.");
-                    const { data: paf } = await supabase
-                      .from("pf_accounts")
-                      .select("slug, name, color, sort_order")
-                      .eq("client_id", clientId)
-                      .order("sort_order", { ascending: true })
-                      .order("name", { ascending: true });
-                    setAccounts((paf ?? []) as PFAccount[]);
-                    setAlloc((p) => ({ ...p, [slug]: 0 }));
-                  }}
-                >
-                  + Add Account
-                </Button>
-              </div>
-            </Card>
-          </div>
+                    )
+                  );
+                  alert("Allocations saved.");
+                }}
+                className={`!border-transparent !bg-[${BRAND.blue}] !text-white hover:opacity-90 ${
+                  !allocOk ? "opacity-60 cursor-not-allowed" : ""
+                }`}
+              >
+                Save Allocations
+              </Button>
+              <Button className="!border-slate-200" onClick={() => location.reload()}>
+                Recalculate
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (!supabase) {
+                    alert(SUPABASE_ENV_MESSAGE);
+                    return;
+                  }
+                  if (!clientId) return;
+                  const name = prompt("Add PF account (example: Truck)");
+                  if (!name) return;
+                  const slug = toSlug(name);
+                  const { error } = await supabase.from("pf_accounts").insert({
+                    client_id: clientId,
+                    slug,
+                    name,
+                    sort_order: 100,
+                    color: "#8b5cf6",
+                  });
+                  if (error) {
+                    alert("Could not add account. Check RLS.");
+                    return;
+                  }
+                  const { data: paf } = await supabase
+                    .from("pf_accounts")
+                    .select("slug, name, color, sort_order")
+                    .eq("client_id", clientId)
+                    .order("sort_order", { ascending: true })
+                    .order("name", { ascending: true });
+                  setAccounts((paf ?? []) as PFAccount[]);
+                  setAlloc((p) => ({ ...p, [slug]: 0 }));
+                }}
+              >
+                + Add Account
+              </Button>
+            </div>
+          </Card>
 
-          {/* drill panel */}
           {drill && (
             <div className="fixed inset-0 z-40">
               <div className="absolute inset-0 bg-black/30" onClick={() => setDrill(null)} />
@@ -1757,7 +1804,6 @@ export default function Page() {
                   </button>
                 </div>
 
-                {/* load occurrences for this account/month */}
                 <DrillTable
                   clientId={clientId!}
                   ym={drill.ym}
@@ -1804,6 +1850,7 @@ function DrillTable({
   coaMap: Record<string, string>;
 }) {
   useEffect(() => {
+    if (!supabase) return;
     (async () => {
       const { data } = await supabase
         .from("v_proj_occurrences")
@@ -1813,7 +1860,7 @@ function DrillTable({
       const filtered = (data ?? []).filter((r: any) => coaMap[r.coa_account_id] === slug);
       setOcc(filtered as OccRow[]);
     })();
-  }, [clientId, ym, slug]);
+  }, [clientId, ym, slug, supabase]);
 
   const inflows = occ.filter((r) => r.amount > 0);
   const outflows = occ.filter((r) => r.amount < 0);

@@ -166,72 +166,149 @@ export default function Page() {
   const [occ, setOcc] = useState<OccRow[]>([]);
   const [coaMap, setCoaMap] = useState<Record<string, string>>({}); // coa_id -> pf_slug
   const [customProjections, setCustomProjections] = useState<CustomProjection[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   // ------------ bootstrap clients ------------
   useEffect(() => {
+    if (!supabase) {
+      setDataError(
+        "Supabase environment variables are missing. Provide NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to load client data."
+      );
+      return;
+    }
+
+    let cancelled = false;
+
     (async () => {
-      const { data } = await supabase.from("clients").select("id, name").order("created_at");
-      setClients(data ?? []);
-      if (!clientId && data && data.length) setClientId(data[0].id);
+      try {
+        const { data, error } = await supabase
+          .from("clients")
+          .select("id, name")
+          .order("created_at");
+        if (cancelled) return;
+        if (error) throw error;
+        setClients(data ?? []);
+        if (data && data.length) {
+          setClientId((prev) => prev ?? data[0].id);
+        }
+        setDataError(null);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Unable to load clients", err);
+        setDataError(
+          err instanceof Error ? err.message : "Unable to load clients from Supabase."
+        );
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ------------ load data for a client ------------
   useEffect(() => {
     if (!clientId) return;
+    if (!supabase) {
+      setDataError(
+        "Supabase environment variables are missing. Provide NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to load projections."
+      );
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    setDataError(null);
+    setActivity([]);
+    setBalances([]);
+    setMonths([]);
+
     (async () => {
-      // accounts
-      const { data: paf } = await supabase
-        .from("pf_accounts")
-        .select("slug, name, color, sort_order")
-        .eq("client_id", clientId)
-        .order("sort_order", { ascending: true })
-        .order("name", { ascending: true });
-      setAccounts((paf ?? []) as PFAccount[]);
+      try {
+        const client = supabase;
+        if (!client) return;
 
-      // mapping for drill
-      const { data: mapRows } = await supabase
-        .from("coa_to_pf_map")
-        .select("coa_account_id, pf_slug")
-        .eq("client_id", clientId);
-      const cmap: Record<string, string> = {};
-      (mapRows ?? []).forEach((r: any) => (cmap[r.coa_account_id] = r.pf_slug));
-      setCoaMap(cmap);
+        const { data: paf, error: accountError } = await client
+          .from("pf_accounts")
+          .select("slug, name, color, sort_order")
+          .eq("client_id", clientId)
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true });
+        if (cancelled) return;
+        if (accountError) throw accountError;
+        setAccounts((paf ?? []) as PFAccount[]);
 
-      // allocations – most recent
-      const { data: latest } = await supabase
-        .from("allocation_targets")
-        .select("effective_date")
-        .eq("client_id", clientId)
-        .order("effective_date", { ascending: false })
-        .limit(1);
-      const eff = latest?.[0]?.effective_date ?? allocDate;
-      setAllocDate(eff);
-      const { data: arows } = await supabase
-        .from("allocation_targets")
-        .select("pf_slug, pct")
-        .eq("client_id", clientId)
-        .eq("effective_date", eff);
-      const aMap: Record<string, number> = {};
-      (arows ?? []).forEach((r: any) => (aMap[r.pf_slug] = Number(r.pct || 0)));
-      setAlloc(aMap);
+        const { data: mapRows, error: mapError } = await client
+          .from("coa_to_pf_map")
+          .select("coa_account_id, pf_slug")
+          .eq("client_id", clientId);
+        if (cancelled) return;
+        if (mapError) throw mapError;
+        const cmap: Record<string, string> = {};
+        (mapRows ?? []).forEach((r: any) => (cmap[r.coa_account_id] = r.pf_slug));
+        setCoaMap(cmap);
 
-      // activity + balances (long)
-      const { data: act } = await supabase
-        .from("v_monthly_activity_long")
-        .select("*")
-        .eq("client_id", clientId)
-        .order("ym");
-      const { data: bal } = await supabase
-        .from("v_pf_balances_long")
-        .select("*")
-        .eq("client_id", clientId)
-        .order("ym");
-      const allMonths = Array.from(new Set((act ?? []).map((r: any) => r.ym)));
-      setMonths(filterMonths(allMonths, startMonth, horizon));
-      setActivity((act ?? []) as ActLong[]);
-      setBalances((bal ?? []) as BalLong[]);
+        const { data: latest, error: latestError } = await client
+          .from("allocation_targets")
+          .select("effective_date")
+          .eq("client_id", clientId)
+          .order("effective_date", { ascending: false })
+          .limit(1);
+        if (cancelled) return;
+        if (latestError) throw latestError;
+        const fallbackEff =
+          latest?.[0]?.effective_date ?? new Date().toISOString().slice(0, 10);
+        setAllocDate(fallbackEff);
+
+        const { data: arows, error: allocError } = await client
+          .from("allocation_targets")
+          .select("pf_slug, pct")
+          .eq("client_id", clientId)
+          .eq("effective_date", fallbackEff);
+        if (cancelled) return;
+        if (allocError) throw allocError;
+        const aMap: Record<string, number> = {};
+        (arows ?? []).forEach((r: any) => (aMap[r.pf_slug] = Number(r.pct || 0)));
+        setAlloc(aMap);
+
+        const { data: act, error: actError } = await client
+          .from("v_monthly_activity_long")
+          .select("*")
+          .eq("client_id", clientId)
+          .order("ym");
+        if (cancelled) return;
+        if (actError) throw actError;
+
+        const { data: bal, error: balanceError } = await client
+          .from("v_pf_balances_long")
+          .select("*")
+          .eq("client_id", clientId)
+          .order("ym");
+        if (cancelled) return;
+        if (balanceError) throw balanceError;
+
+        const allMonths = Array.from(new Set((act ?? []).map((r: any) => r.ym)));
+        setMonths(filterMonths(allMonths, startMonth, horizon));
+        setActivity((act ?? []) as ActLong[]);
+        setBalances((bal ?? []) as BalLong[]);
+        setDataError(null);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Unable to load forecast data", err);
+        setDataError(
+          err instanceof Error ? err.message : "Unable to load projections from Supabase."
+        );
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [clientId]);
 
   // re-filter months when controls change
@@ -394,15 +471,30 @@ export default function Page() {
 
   useEffect(() => {
     if (!drill || !clientId) return;
+    if (!supabase) return;
+    let cancelled = false;
+
     (async () => {
-      const { data } = await supabase
-        .from("v_proj_occurrences")
-        .select("client_id, month_start, coa_account_id, kind, name, amount")
-        .eq("client_id", clientId)
-        .eq("month_start", drill.month + "-01");
-      const filtered = (data ?? []).filter((r: any) => coaMap[r.coa_account_id] === drill.slug);
-      setOcc(filtered as OccRow[]);
+      try {
+        const { data, error } = await supabase
+          .from("v_proj_occurrences")
+          .select("client_id, month_start, coa_account_id, kind, name, amount")
+          .eq("client_id", clientId)
+          .eq("month_start", drill.month + "-01");
+        if (cancelled) return;
+        if (error) throw error;
+        const filtered = (data ?? []).filter((r: any) => coaMap[r.coa_account_id] === drill.slug);
+        setOcc(filtered as OccRow[]);
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Unable to load projected occurrences", err);
+        }
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [drill, clientId, coaMap]);
 
   // ------------ render ------------
@@ -461,6 +553,9 @@ export default function Page() {
     : "No periods";
   const periodRangeLabel =
     currentPeriod && finalPeriod ? `${currentPeriod.label} – ${finalPeriod.label}` : "Forecast unavailable";
+  const hasPeriods = periods.length > 0;
+  const showEmptyState = !isLoading && !dataError && !hasPeriods;
+  const canRenderForecast = hasPeriods;
 
   return (
     <main className="min-h-screen bg-slate-100">
@@ -521,7 +616,17 @@ export default function Page() {
                     onClick={async () => {
                       const name = prompt("New client name?");
                       if (!name) return;
-                      const { data, error } = await supabase.from("clients").insert({ name }).select().single();
+                      if (!supabase) {
+                        alert(
+                          "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to create clients."
+                        );
+                        return;
+                      }
+                      const { data, error } = await supabase
+                        .from("clients")
+                        .insert({ name })
+                        .select()
+                        .single();
                       if (error) return alert("Could not add client. Check policies.");
                       setClients((p) => [...p, data as ClientRow]);
                       setClientId((data as any).id);
@@ -563,8 +668,29 @@ export default function Page() {
         <div className="flex flex-1 flex-col bg-slate-100">
           <div className="flex-1 py-10">
             <div className="mx-auto w-full max-w-7xl px-6">
-              <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-                <div className="space-y-6 xl:col-span-8">
+              {dataError && (
+                <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700 shadow-sm">
+                  {dataError}
+                </div>
+              )}
+              {isLoading && (
+                <div className="mb-6 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
+                  Loading forecast data…
+                </div>
+              )}
+              {showEmptyState && (
+                <Card className="mb-6 text-center">
+                  <div className="space-y-2">
+                    <p className="text-base font-semibold text-slate-800">No forecast periods to display</p>
+                    <p className="text-sm text-slate-500">
+                      Adjust the starting period or add projection data in Supabase to populate the chart and tables.
+                    </p>
+                  </div>
+                </Card>
+              )}
+              {canRenderForecast && (
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+                  <div className="space-y-6 xl:col-span-8">
                   <Card>
                     <div className="flex flex-wrap items-start justify-between gap-6">
                       <div className="max-w-xl space-y-2">
@@ -942,6 +1068,7 @@ export default function Page() {
                   </Card>
                 </aside>
               </div>
+            )}
             </div>
           </div>
         </div>
@@ -1055,12 +1182,12 @@ function estimateWeeklyBalance(ending: number, net: number, weekIndex: number, w
 function filterMonths(all: string[], startYM: string, horizon: number) {
   const [y, m] = startYM.split("-").map(Number);
   const start = new Date(y, m - 1, 1);
-  const list = all
+  const allDates = all
     .map((ym) => new Date(ym + "-01"))
-    .filter((d) => d >= start)
-    .sort((a, b) => a.getTime() - b.getTime())
-    .slice(0, horizon);
-  return list.map((d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    .sort((a, b) => a.getTime() - b.getTime());
+  const filtered = allDates.filter((d) => d >= start).slice(0, horizon);
+  const targetList = filtered.length ? filtered : allDates.slice(-horizon);
+  return targetList.map((d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
 }
 
 function AccountDetailPanel({

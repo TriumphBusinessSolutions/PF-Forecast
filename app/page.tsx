@@ -95,21 +95,6 @@ const Button: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement>> = ({
   />
 );
 
-const AppScaffold: React.FC<React.PropsWithChildren> = ({ children }) => (
-  <main className="min-h-screen bg-slate-100">
-    <Head>
-      <title>Profit First Forecast</title>
-      <link
-        href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap"
-        rel="stylesheet"
-      />
-    </Head>
-    <style jsx global>{`
-        html, body { font-family: Rubik, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-      `}</style>
-    {children}
-  </main>
-);
 
 const AuthView: React.FC = () => {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
@@ -1389,7 +1374,17 @@ export default function Page() {
   }
 
   return (
-    <AppScaffold>
+    <main className="min-h-screen bg-slate-100">
+      <Head>
+        <title>Profit First Forecast</title>
+        <link
+          href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700;800&display=swap"
+          rel="stylesheet"
+        />
+      </Head>
+      <style jsx global>{`
+        html, body { font-family: Rubik, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      `}</style>
       {checkingSession ? (
         <div className="flex min-h-screen items-center justify-center px-4 py-12">
           <p className="text-sm text-slate-500">Checking your session…</p>
@@ -1410,7 +1405,7 @@ export default function Page() {
         <div className="max-w-[1200px] mx-auto px-4 py-4">
           {/* top bar */}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <select
                 value={clientId ?? ""}
                 onChange={(e) => changeClientId(e.target.value)}
@@ -1436,6 +1431,62 @@ export default function Page() {
               >
                 + Add Client
               </Button>
+              <Button
+                className="border-0 bg-red-600 text-white hover:bg-red-700"
+                onClick={async () => {
+                  if (!clientId) return;
+                  const clientName = clients.find((c) => c.id === clientId)?.name ?? "this client";
+                  if (
+                    !window.confirm(
+                      `Delete ${clientName}? This will permanently remove the client and all associated data.`
+                    )
+                  ) {
+                    return;
+                  }
+
+                  const tables = ["allocation_targets", "pf_accounts", "coa_to_pf_map"];
+                  for (const table of tables) {
+                    const { error } = await supabase.from(table).delete().eq("client_id", clientId);
+                    if (error) {
+                      console.error(error);
+                      alert(`Could not delete client data from ${table}. Check policies.`);
+                      return;
+                    }
+                  }
+
+                  const { error } = await supabase.from("clients").delete().eq("id", clientId);
+                  if (error) {
+                    console.error(error);
+                    alert("Could not delete client. Check policies.");
+                    return;
+                  }
+
+                  const currentIndex = clients.findIndex((c) => c.id === clientId);
+                  const remainingClients = clients.filter((c) => c.id !== clientId);
+                  setClients(remainingClients);
+                  const nextClientId =
+                    remainingClients[currentIndex]?.id ??
+                    remainingClients[currentIndex - 1]?.id ??
+                    remainingClients[0]?.id ??
+                    null;
+                  changeClientId(nextClientId);
+
+                  if (!nextClientId) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    setAccounts([]);
+                    setActivity([]);
+                    setBalances([]);
+                    setMonths([]);
+                    setAlloc({});
+                    setAllocDate(today);
+                    setCoaMap({});
+                    setDrill(null);
+                    setOcc([]);
+                  }
+                }}
+              >
+                Delete Client
+              </Button>
             </div>
 
             <div className="flex items-center gap-3 text-sm text-slate-600">
@@ -1446,99 +1497,6 @@ export default function Page() {
               )}
               <Button onClick={handleSignOut}>Sign out</Button>
             </div>
-      <div className="max-w-[1200px] mx-auto px-4 py-4">
-        {/* top bar */}
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
-          <div className="flex items-center gap-3">
-            <select
-              value={clientId ?? ""}
-              onChange={(e) => changeClientId(e.target.value)}
-              className="px-3 py-2 rounded-lg border bg-white"
-            >
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <Button
-              onClick={async () => {
-                const name = prompt("New client name?");
-                if (!name) return;
-                const { data, error } = await supabase.from("clients").insert({ name }).select().single();
-                if (error) return alert("Could not add client. Check policies.");
-                setClients((p) => [...p, data as ClientRow]);
-                changeClientId((data as any).id);
-                // seed core PF accounts for this client so UI works instantly
-                const core = [
-                  { slug: "operating", name: "Operating", sort_order: 10, color: "#64748b" },
-                  { slug: "profit", name: "Profit", sort_order: 20, color: "#fa9100" },
-                  { slug: "owners_pay", name: "Owner's Pay", sort_order: 30, color: "#10b981" },
-                  { slug: "tax", name: "Tax", sort_order: 40, color: "#ef4444" },
-                  { slug: "vault", name: "Vault", sort_order: 50, color: "#8b5cf6" },
-                ];
-                await supabase.from("pf_accounts").insert(
-                  core.map((r) => ({ client_id: (data as any).id, ...r }))
-                );
-              }}
-            >
-              + Add Client
-            </Button>
-            <Button
-              className="bg-red-600 text-white border-0 hover:bg-red-700"
-              onClick={async () => {
-                if (!clientId) return;
-                const clientName = clients.find((c) => c.id === clientId)?.name ?? "this client";
-                if (
-                  !window.confirm(
-                    `Delete ${clientName}? This will permanently remove the client and all associated data.`
-                  )
-                )
-                  return;
-
-                const tables = ["allocation_targets", "pf_accounts", "coa_to_pf_map"];
-                for (const table of tables) {
-                  const { error } = await supabase.from(table).delete().eq("client_id", clientId);
-                  if (error) {
-                    console.error(error);
-                    alert(`Could not delete client data from ${table}. Check policies.`);
-                    return;
-                  }
-                }
-
-                const { error } = await supabase.from("clients").delete().eq("id", clientId);
-                if (error) {
-                  console.error(error);
-                  alert("Could not delete client. Check policies.");
-                  return;
-                }
-
-                const currentIndex = clients.findIndex((c) => c.id === clientId);
-                const remainingClients = clients.filter((c) => c.id !== clientId);
-                setClients(remainingClients);
-                const nextClientId =
-                  remainingClients[currentIndex]?.id ??
-                  remainingClients[currentIndex - 1]?.id ??
-                  remainingClients[0]?.id ??
-                  null;
-                changeClientId(nextClientId);
-
-                if (!nextClientId) {
-                  const today = new Date().toISOString().slice(0, 10);
-                  setAccounts([]);
-                  setActivity([]);
-                  setBalances([]);
-                  setMonths([]);
-                  setAlloc({});
-                  setAllocDate(today);
-                  setCoaMap({});
-                  setDrill(null);
-                  setOcc([]);
-                }
-              }}
-            >
-              Delete Client
-            </Button>
           </div>
 
           {/* controls */}
@@ -1813,7 +1771,7 @@ export default function Page() {
           )}
         </div>
       )}
-    </AppScaffold>
+    </main>
   );
 
 }

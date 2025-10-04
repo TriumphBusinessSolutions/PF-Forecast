@@ -18,6 +18,30 @@ import { supabase } from "../lib/supabase";
 // ------------------ brand + helpers ------------------
 const BRAND = { blue: "#004aad", orange: "#fa9100" };
 
+const MEMBERSHIP_PLANS = [
+  {
+    id: "launch",
+    name: "Launch",
+    blurb: "Perfect for solo advisors establishing their first Profit First dashboards.",
+    headline: "Starter access",
+    accent: "rgba(0, 74, 173, 0.65)",
+  },
+  {
+    id: "growth",
+    name: "Growth",
+    blurb: "Great for growing firms that need to collaborate with a handful of clients.",
+    headline: "Team collaboration",
+    accent: "rgba(250, 145, 0, 0.7)",
+  },
+  {
+    id: "scale",
+    name: "Scale",
+    blurb: "Reserved for multi-advisor teams managing complex Profit First portfolios.",
+    headline: "Unlimited potential",
+    accent: "rgba(15, 23, 42, 0.7)",
+  },
+];
+
 const money = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n || 0);
 
@@ -93,6 +117,13 @@ const AuthView: React.FC = () => {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [signupStep, setSignupStep] = useState<"plans" | "form">("form");
+  const [selectedPlan, setSelectedPlan] = useState<string>(MEMBERSHIP_PLANS[0]?.id ?? "launch");
+
+  const selectedPlanMeta = useMemo(
+    () => MEMBERSHIP_PLANS.find((plan) => plan.id === selectedPlan) ?? MEMBERSHIP_PLANS[0],
+    [selectedPlan],
+  );
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -103,7 +134,11 @@ const AuthView: React.FC = () => {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { membership_plan: selectedPlan } },
+        });
         if (error) throw error;
         setMessage({
           type: "success",
@@ -121,7 +156,17 @@ const AuthView: React.FC = () => {
   const switchMode = (nextMode: "sign-in" | "sign-up") => {
     setMode(nextMode);
     setMessage(null);
+    if (nextMode === "sign-up") {
+      setSignupStep("plans");
+      setSelectedPlan(MEMBERSHIP_PLANS[0]?.id ?? "launch");
+      setEmail("");
+      setPassword("");
+    } else {
+      setSignupStep("form");
+    }
   };
+
+  const showPlanStep = mode === "sign-up" && signupStep === "plans";
 
   return (
     <div className="auth-root">
@@ -162,66 +207,125 @@ const AuthView: React.FC = () => {
           <div className="auth-copy">
             <h1 className="auth-brand-title">Triumph Cash Forecast</h1>
             <p className="auth-brand-subtitle">Specially made to Follow Profit First Methods</p>
-            <h2 className="auth-title">{mode === "sign-in" ? "Welcome back" : "Create your account"}</h2>
+            <h2 className="auth-title">
+              {mode === "sign-in"
+                ? "Welcome back"
+                : showPlanStep
+                ? "Choose your membership"
+                : "Create your account"}
+            </h2>
             <p className="auth-subtitle">
               {mode === "sign-in"
                 ? "Sign in to review client performance and update allocations."
+                : showPlanStep
+                ? "Select the membership level that fits your firm—each option can be customized later."
                 : "Set up your workspace so you can start onboarding clients."}
             </p>
           </div>
 
-          <form className="auth-form" onSubmit={handleSubmit}>
-            <label className="auth-field" htmlFor="authEmail">
-              <span className="auth-label">Email</span>
-              <input
-                id="authEmail"
-                type="email"
-                required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="auth-input"
-              />
-            </label>
-            <label className="auth-field" htmlFor="authPassword">
-              <span className="auth-label">Password</span>
-              <input
-                id="authPassword"
-                type="password"
-                required
-                minLength={6}
-                autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="auth-input"
-              />
-            </label>
-            {message && (
-              <p className={`auth-message ${message.type === "error" ? "auth-message--error" : "auth-message--success"}`}>
-                {message.text}
+          {showPlanStep ? (
+            <div className="auth-plan-picker" role="radiogroup" aria-label="Membership level">
+              <div className="auth-plan-grid">
+                {MEMBERSHIP_PLANS.map((plan) => {
+                  const active = selectedPlan === plan.id;
+                  return (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      className={`auth-plan ${active ? "auth-plan--active" : ""}`}
+                      onClick={() => setSelectedPlan(plan.id)}
+                    >
+                      <span className="auth-plan-headline">{plan.headline}</span>
+                      <span className="auth-plan-name">{plan.name}</span>
+                      <span className="auth-plan-blurb">{plan.blurb}</span>
+                      <span className="auth-plan-pill">Customize soon</span>
+                      <span className="auth-plan-highlight" style={{ background: plan.accent }} />
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="auth-submit" onClick={() => setSignupStep("form")}>
+                Continue with {selectedPlanMeta?.name ?? "plan"}
+              </button>
+              <p className="auth-plan-note">
+                You can fine-tune pricing, client limits, and perks for each membership inside Supabase later.
               </p>
-            )}
-            <button type="submit" className="auth-submit" disabled={loading}>
-              {loading ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
-            </button>
-            <p className="auth-switch">
-              {mode === "sign-in" ? (
-                <>
-                  Don&apos;t have an account?{" "}
-                  <button type="button" onClick={() => switchMode("sign-up")}>
-                    Sign up
+              <p className="auth-switch">
+                Already have an account?{" "}
+                <button type="button" onClick={() => switchMode("sign-in")}>Sign in</button>
+              </p>
+            </div>
+          ) : (
+            <form className="auth-form" onSubmit={handleSubmit}>
+              {mode === "sign-up" && selectedPlanMeta && (
+                <div className="auth-plan-summary">
+                  <div>
+                    <span className="auth-plan-summary-label">Membership</span>
+                    <span className="auth-plan-summary-name">{selectedPlanMeta.name}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="auth-plan-summary-change"
+                    onClick={() => setSignupStep("plans")}
+                  >
+                    Change
                   </button>
-                </>
-              ) : (
-                <>
-                  Already have an account?{" "}
-                  <button type="button" onClick={() => switchMode("sign-in")}>
-                    Sign in
-                  </button>
-                </>
+                </div>
               )}
-            </p>
-          </form>
+              <label className="auth-field" htmlFor="authEmail">
+                <span className="auth-label">Email</span>
+                <input
+                  id="authEmail"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="auth-input"
+                />
+              </label>
+              <label className="auth-field" htmlFor="authPassword">
+                <span className="auth-label">Password</span>
+                <input
+                  id="authPassword"
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete={mode === "sign-in" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="auth-input"
+                />
+              </label>
+              {message && (
+                <p
+                  className={`auth-message ${
+                    message.type === "error" ? "auth-message--error" : "auth-message--success"
+                  }`}
+                >
+                  {message.text}
+                </p>
+              )}
+              <button type="submit" className="auth-submit" disabled={loading}>
+                {loading ? "Working..." : mode === "sign-in" ? "Sign in" : "Create account"}
+              </button>
+              <p className="auth-switch">
+                {mode === "sign-in" ? (
+                  <>
+                    Don&apos;t have an account?{" "}
+                    <button type="button" onClick={() => switchMode("sign-up")}>Sign up</button>
+                  </>
+                ) : (
+                  <>
+                    Already have an account?{" "}
+                    <button type="button" onClick={() => switchMode("sign-in")}>Sign in</button>
+                  </>
+                )}
+              </p>
+            </form>
+          )}
         </div>
       </div>
 
@@ -349,6 +453,127 @@ const AuthView: React.FC = () => {
           display: flex;
           flex-direction: column;
           gap: 20px;
+        }
+        .auth-plan-picker {
+          margin-top: 32px;
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+        }
+        .auth-plan-grid {
+          display: grid;
+          gap: 16px;
+        }
+        @media (min-width: 768px) {
+          .auth-plan-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+        .auth-plan {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          align-items: flex-start;
+          border-radius: 18px;
+          padding: 20px;
+          text-align: left;
+          background: rgba(255, 255, 255, 0.92);
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+          color: #0f172a;
+          cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+          overflow: hidden;
+        }
+        .auth-plan:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 18px 30px -18px rgba(15, 23, 42, 0.45);
+        }
+        .auth-plan:focus-visible {
+          outline: 3px solid rgba(0, 74, 173, 0.35);
+          outline-offset: 2px;
+        }
+        .auth-plan--active {
+          border-color: rgba(0, 74, 173, 0.6);
+          box-shadow: 0 20px 34px -18px rgba(2, 6, 23, 0.6);
+        }
+        .auth-plan-headline {
+          font-size: 12px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          font-weight: 600;
+          color: #475569;
+        }
+        .auth-plan-name {
+          font-size: 20px;
+          font-weight: 700;
+          color: ${BRAND.blue};
+        }
+        .auth-plan-blurb {
+          font-size: 13px;
+          color: #475569;
+          line-height: 1.4;
+        }
+        .auth-plan-pill {
+          margin-top: auto;
+          display: inline-flex;
+          align-items: center;
+          padding: 6px 12px;
+          border-radius: 9999px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #fff;
+          background: linear-gradient(135deg, ${BRAND.blue}, ${BRAND.orange});
+        }
+        .auth-plan-highlight {
+          position: absolute;
+          inset: auto 0 0 0;
+          height: 12px;
+          opacity: 0.75;
+        }
+        .auth-plan-note {
+          font-size: 13px;
+          color: #475569;
+          text-align: center;
+        }
+        .auth-plan-summary {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          border-radius: 14px;
+          background: rgba(0, 74, 173, 0.08);
+          border: 1px solid rgba(0, 74, 173, 0.2);
+          color: #0f172a;
+        }
+        .auth-plan-summary-label {
+          display: block;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #1e293b;
+        }
+        .auth-plan-summary-name {
+          font-size: 16px;
+          font-weight: 600;
+          color: ${BRAND.blue};
+        }
+        .auth-plan-summary-change {
+          border: none;
+          background: transparent;
+          font-size: 13px;
+          font-weight: 600;
+          color: ${BRAND.orange};
+          cursor: pointer;
+          text-decoration: underline;
+        }
+        .auth-plan-summary-change:hover {
+          color: #cc7400;
+        }
+        .auth-plan-summary-change:focus-visible {
+          outline: 2px solid ${BRAND.orange};
+          outline-offset: 2px;
         }
         .auth-field {
           display: flex;

@@ -17,6 +17,16 @@ NEXT_PUBLIC_SUPABASE_URL=your-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
 
+### Supabase authentication prerequisites
+
+The login and sign-up screens use Supabase Auth. Inside your Supabase project:
+
+1. Navigate to **Authentication → Providers** and ensure the **Email** provider is enabled.
+2. Under **Authentication → URL Configuration**, set the Site URL (and optional redirect URLs) to match the domain where this app is hosted so confirmation links work.
+3. (Optional) Customize confirmation emails and branding in **Authentication → Templates** to match Triumph Cash Forecast.
+
+No extra tables are required for authentication—the built-in `auth.users` table stores user credentials. New accounts created through the UI include the selected membership level in `auth.users.raw_user_meta_data.membership_plan` for future billing logic.
+
 ### Supabase schema bootstrap
 
 Run the SQL below in the Supabase SQL editor to create the tables, views, and row-level security policies used by the app.

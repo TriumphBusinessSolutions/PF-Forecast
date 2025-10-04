@@ -27,6 +27,16 @@ The login and sign-up screens use Supabase Auth. Inside your Supabase project:
 
 No extra tables are required for authentication—the built-in `auth.users` table stores user credentials. New accounts created through the UI include the selected membership level in `auth.users.raw_user_meta_data.membership_plan` for future billing logic.
 
+#### Seed the Triumph login
+
+To match the pre-filled credentials on the landing page, create a Supabase user with the email `info@triumphcoachinggroup.com` and password `Triumph$2025`. You can add the account from the Supabase Dashboard under **Authentication → Users**, or run the Supabase CLI:
+
+```bash
+supabase auth signups create --email info@triumphcoachinggroup.com --password "Triumph$2025"
+```
+
+If email confirmations are enabled, confirm the user from the dashboard so the account can sign in immediately.
+
 ### Supabase schema bootstrap
 
 Run the SQL below in the Supabase SQL editor to create the tables, views, and row-level security policies used by the app.
